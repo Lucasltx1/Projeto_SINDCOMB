@@ -1,0 +1,98 @@
+services:
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --hostname 0.0.0.0"
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      SINDCOMB_ML_BASE_URL: http://qwen-ml:8000/v1
+      SINDCOMB_ML_API_KEY: ${SINDCOMB_ML_API_KEY:-dev-only-token}
+      SINDCOMB_ML_MODEL: sindcomb-qwen
+      DATABASE_URL: postgresql+psycopg://sindcomb:${POSTGRES_PASSWORD:-dev-only-password}@postgres:5432/sindcomb
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: sindcomb
+      POSTGRES_USER: sindcomb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-only-password}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sindcomb -d sindcomb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  qwen-ml:
+    image: vllm/vllm-openai:v0.29.0
+    profiles: ["ml"]
+    command:
+      - Qwen/Qwen3.5-4B
+      - --served-model-name
+      - sindcomb-qwen
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --language-model-only
+      - --gpu-memory-utilization
+      - "0.85"
+      - --max-model-len
+      - "8192"
+      - --api-key
+      - ${SINDCOMB_ML_API_KEY:-dev-only-token}
+    shm_size: "8gb"
+    volumes:
+      - qwen_model_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Sem ports publicados: apenas os outros containers da rede Compose acessam o modelo.
+
+volumes:
+  frontend_node_modules:
+  postgres_data:
+  redis_data:
+  qwen_model_cache:
