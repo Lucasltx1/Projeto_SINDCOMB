@@ -21,6 +21,8 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
+      SINDCOMB_AUTH_SECRET: ${SINDCOMB_AUTH_SECRET:-dev-only-change-me-at-least-32-characters}
+      DATAJUD_API_KEY: ${DATAJUD_API_KEY:-}
       SINDCOMB_ML_BASE_URL: http://qwen-ml:8000/v1
       SINDCOMB_ML_API_KEY: ${SINDCOMB_ML_API_KEY:-dev-only-token}
       SINDCOMB_ML_MODEL: sindcomb-qwen
