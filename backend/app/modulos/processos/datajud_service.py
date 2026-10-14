@@ -59,10 +59,12 @@ def extrair_atualizacao(fonte: dict[str, Any]) -> dict[str, str | None]:
     if isinstance(movimentos, dict):
         movimentos = [movimentos]
     movimento_recente = None
+    data_hora_movimento = None
     if isinstance(movimentos, list) and movimentos:
         validos = [item for item in movimentos if isinstance(item, dict)]
         if validos:
             ultimo = max(validos, key=lambda item: str(item.get("dataHora") or ""))
+            data_hora_movimento = ultimo.get("dataHora")
             nome = ultimo.get("nome") or (ultimo.get("movimentoNacional") or {}).get("nome")
             complemento = ultimo.get("complemento") or ultimo.get("complementosTabelados")
             if isinstance(complemento, list):
@@ -72,10 +74,11 @@ def extrair_atualizacao(fonte: dict[str, Any]) -> dict[str, str | None]:
             movimento_recente = " — ".join(str(valor) for valor in (nome, complemento) if valor)
 
     return {
-        "classe": str(classe) if classe else None,
-        "assunto": assunto or None,
-        "ultima_movimentacao": movimento_recente,
-    }
+    "classe": str(classe) if classe else None,
+    "assunto": assunto or None,
+    "ultima_movimentacao": movimento_recente,
+    "data_hora_movimento": data_hora_movimento,
+}
 
 
 def extrair_candidato_datajud(
