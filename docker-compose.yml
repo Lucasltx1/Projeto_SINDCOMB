@@ -22,6 +22,18 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       SINDCOMB_AUTH_SECRET: ${SINDCOMB_AUTH_SECRET:-dev-only-change-me-at-least-32-characters}
+      SINDCOMB_ACCESS_TOKEN_MINUTES: ${SINDCOMB_ACCESS_TOKEN_MINUTES:-480}
+      SINDCOMB_EMAIL_VERIFICATION_HOURS: ${SINDCOMB_EMAIL_VERIFICATION_HOURS:-24}
+      SINDCOMB_PUBLIC_API_URL: ${SINDCOMB_PUBLIC_API_URL:-http://localhost:8000}
+      SINDCOMB_SENHA_INICIAL: ${SINDCOMB_SENHA_INICIAL:-}
+      SINDCOMB_BOOTSTRAP_ADMIN_PASSWORD: ${SINDCOMB_BOOTSTRAP_ADMIN_PASSWORD:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
       DATAJUD_API_KEY: ${DATAJUD_API_KEY:-}
       SINDCOMB_ML_BASE_URL: http://qwen-ml:8000/v1
       SINDCOMB_ML_API_KEY: ${SINDCOMB_ML_API_KEY:-dev-only-token}
@@ -40,10 +52,9 @@ services:
       POSTGRES_DB: sindcomb
       POSTGRES_USER: sindcomb
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-only-password}
-    ports:
-      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/001_postgresql_schema.sql:/docker-entrypoint-initdb.d/001_postgresql_schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sindcomb -d sindcomb"]
       interval: 5s
