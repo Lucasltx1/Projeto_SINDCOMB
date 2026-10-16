@@ -1,4 +1,4 @@
-export default interface Processo {
+export interface Processo {
     numeroProcesso: string;
     dataAbertura?: string;
     dataUltimaMovimentacao?: string;
@@ -10,7 +10,7 @@ export default interface Processo {
     necessitaAcao?: boolean;
 }
 
-interface Parte {
+export interface Parte {
     nomeRazaoSocial: string;
     cpfCnpj?: string;
     associado?: boolean;

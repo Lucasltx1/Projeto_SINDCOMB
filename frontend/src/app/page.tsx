@@ -2,12 +2,12 @@
 import CardProcesso from "@/components/cardProcesso";
 import { Label } from "@/components/ui/label"
 import { loremIpsum } from "lorem-ipsum";
-import type Processo from "../../types/processo";
+import type { Processo } from "../../types/processo";
 
 const processos: Processo[] = [
   { numeroProcesso: "NNNNNNN-DD.AAAA.8.19.OOOO",
     partes: {
-        poloAtivo: [{nomeRazaoSocial: "Fulano de Tal", cpfCnpj: "123.456.789-00"}],
+        poloAtivo: [{nomeRazaoSocial: "Fulano de Tal", cpfCnpj: "123.456.789-00"}, {nomeRazaoSocial: "Cicrano de Tal", cpfCnpj: "123.456.789-00"}],
         poloPassivo: [{nomeRazaoSocial: "Posto X", cpfCnpj: "12.345.678/0001-00", associado: true}]
     },
      detalhes: loremIpsum({ count: 1, units: "paragraphs" }),
@@ -15,7 +15,7 @@ const processos: Processo[] = [
   },
   { numeroProcesso: "NNNNNNN-DD.AAAA.8.19.OOOO",
     partes: {
-        poloAtivo: [{nomeRazaoSocial: "Cicrano de Tal", cpfCnpj: "123.456.789-00"}],
+        poloAtivo: [{nomeRazaoSocial: "Beltrano de Tal", cpfCnpj: "123.456.789-00"}],
         poloPassivo: [{nomeRazaoSocial: "Posto Y", cpfCnpj: "12.345.678/0001-00", associado: true}]
     },
      detalhes: loremIpsum({ count: 1, units: "paragraphs" }),
