@@ -2,15 +2,22 @@
 import CardProcesso from "@/components/cardProcesso";
 import { Label } from "@/components/ui/label"
 import { loremIpsum } from "lorem-ipsum";
+import type Processo from "../../types/processo";
 
-const processos = [
+const processos: Processo[] = [
   { numeroProcesso: "NNNNNNN-DD.AAAA.8.19.OOOO",
-    partes: ["Fulano de Tal", "Posto X"],
+    partes: {
+        poloAtivo: [{nomeRazaoSocial: "Fulano de Tal", cpfCnpj: "123.456.789-00"}],
+        poloPassivo: [{nomeRazaoSocial: "Posto X", cpfCnpj: "12.345.678/0001-00", associado: true}]
+    },
      detalhes: loremIpsum({ count: 1, units: "paragraphs" }),
      necessitaAcao: true 
   },
   { numeroProcesso: "NNNNNNN-DD.AAAA.8.19.OOOO",
-    partes: ["Cicrano de Tal", "Posto Y"],
+    partes: {
+        poloAtivo: [{nomeRazaoSocial: "Cicrano de Tal", cpfCnpj: "123.456.789-00"}],
+        poloPassivo: [{nomeRazaoSocial: "Posto Y", cpfCnpj: "12.345.678/0001-00", associado: true}]
+    },
      detalhes: loremIpsum({ count: 1, units: "paragraphs" }),
      necessitaAcao: false 
   },
@@ -26,12 +33,10 @@ export default function HomePage() {
         {processos.map((processo, index) => (
           <CardProcesso
             key={index}
-            numeroProcesso={processo.numeroProcesso}
-            partes={processo.partes}
-            detalhes={processo.detalhes}
-            necessitaAcao={processo.necessitaAcao}
+            processo={processo}
           />
         ))}
+
         </div>
       </section>
     </main>
