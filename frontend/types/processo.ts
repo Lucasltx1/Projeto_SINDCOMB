@@ -20,4 +20,5 @@ export interface Movimentacao {
     data: string;
     descricao: string;
     tipo: "Audiência" | "Despacho" | "Decisão" | "Sentença" | "Recurso" | "Outros";
+    resumo?: string;
 }

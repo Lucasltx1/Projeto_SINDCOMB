@@ -1,3 +1,4 @@
+import { loremIpsum } from "lorem-ipsum";
 import LinhaDoTempo from "./linhaDoTempo";
 
 export default async function ProcessoPage({params}: {params: Promise<{numeroProcesso: string}>}) {
@@ -9,12 +10,12 @@ export default async function ProcessoPage({params}: {params: Promise<{numeroPro
                 <h1 className="text-2xl font-bold">Processo {numeroProcesso}</h1>
                 <h2>Movimentações</h2>
                 <LinhaDoTempo movimentacoes={[
-                    {data: "2026-01-01", descricao: "Audiência de conciliação", tipo: "Audiência"},
-                    {data: "2026-02-01", descricao: "Despacho do juiz", tipo: "Despacho"},
-                    {data: "2026-03-01", descricao: "Decisão do juiz", tipo: "Decisão"},
-                    {data: "2026-04-01", descricao: "Sentença do juiz", tipo: "Sentença"},
-                    {data: "2026-05-01", descricao: "Recurso interposto", tipo: "Recurso"},
-                    {data: "2026-06-01", descricao: "Outros atos processuais", tipo: "Outros"},
+                    {data: "2026-01-01", descricao: "Audiência de conciliação", tipo: "Audiência", resumo: loremIpsum()},
+                    {data: "2026-02-01", descricao: "Despacho do juiz", tipo: "Despacho", resumo: loremIpsum()},
+                    {data: "2026-03-01", descricao: "Decisão do juiz", tipo: "Decisão", resumo: loremIpsum()},
+                    {data: "2026-04-01", descricao: "Sentença do juiz", tipo: "Sentença", resumo: loremIpsum()},
+                    {data: "2026-05-01", descricao: "Recurso interposto", tipo: "Recurso", resumo: loremIpsum()},
+                    {data: "2026-06-01", descricao: "Outros atos processuais", tipo: "Outros", resumo: loremIpsum()},
                 ]} />
             </section>
         </main>
