@@ -4,6 +4,7 @@ import { Badge } from "./ui/badge";
 import type {Processo, Parte} from "../../types/processo";
 import type { ReactElement } from "react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import Link from "next/link";
 
 export default function CardProcesso({processo}: {processo: Processo}) {
     const poloAtivo = formatarPartes(processo.partes.poloAtivo);
@@ -21,7 +22,7 @@ export default function CardProcesso({processo}: {processo: Processo}) {
             <p>{processo.detalhes}</p>
         </CardContent>
         <CardFooter>
-            <Button variant="default">Expandir</Button>
+            <Button variant="default"><Link href={`/processos/${processo.numeroProcesso}`}>Ver movimentações</Link></Button>
         </CardFooter>
         </Card>
     );
