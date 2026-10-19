@@ -22,3 +22,9 @@ export interface Movimentacao {
     tipo: "Audiência" | "Despacho" | "Decisão" | "Sentença" | "Recurso" | "Outros";
     resumo?: string;
 }
+
+export interface Prazo {
+    prazo: Date;
+    numeroProcesso: string;
+    tipo: "Audiência" | "Despacho" | "Decisão" | "Sentença" | "Recurso" | "Outros";
+}
