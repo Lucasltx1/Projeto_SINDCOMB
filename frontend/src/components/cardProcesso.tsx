@@ -3,7 +3,6 @@ import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader,
 import { Badge } from "./ui/badge";
 import type {Processo, Parte} from "../../types/processo";
 import type { ReactElement } from "react";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import Link from "next/link";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
