@@ -5,6 +5,7 @@ import type {Processo, Parte} from "../../types/processo";
 import type { ReactElement } from "react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import Link from "next/link";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 export default function CardProcesso({processo}: {processo: Processo}) {
     const poloAtivo = formatarPartes(processo.partes.poloAtivo);
@@ -30,14 +31,14 @@ export default function CardProcesso({processo}: {processo: Processo}) {
 
 function formatarNome(parte: Parte): ReactElement {
     if (parte.associado) {
-        return <HoverCard openDelay={100} closeDelay={200}>
-                    <HoverCardTrigger>
-                        <span className="font-semibold">{parte.nomeRazaoSocial}</span>
-                    </HoverCardTrigger>
-                    <HoverCardContent side="top" align="start">
-                        <p>Associado</p>
-                    </HoverCardContent>
-                </HoverCard>;
+        return <Tooltip>
+            <TooltipTrigger asChild>
+                <span className="font-semibold">{parte.nomeRazaoSocial}</span>
+                </TooltipTrigger>
+            <TooltipContent>
+                <p>Associado</p>
+            </TooltipContent>
+        </Tooltip>
     } else {
         return <span>{parte.nomeRazaoSocial}</span>;
     }
