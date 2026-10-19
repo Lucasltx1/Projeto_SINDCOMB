@@ -102,6 +102,50 @@ class ProcessoDB(Base):
     )
 
 
+class PrazoDB(Base):
+    """Representa um prazo processual no banco de dados."""
+
+    __tablename__ = "prazo"
+
+    id_prazo: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(always=True),
+        primary_key=True
+    )
+
+    id_processo: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("processo.id_processo", ondelete="RESTRICT"),
+        nullable=False
+    )
+
+    id_usuario: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("usuario.id_usuario", ondelete="RESTRICT"),
+        nullable=False
+    )
+
+    descricao: Mapped[str] = mapped_column(
+        Text,
+        nullable=False
+    )
+
+    data_inicio: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True
+    )
+
+    data_vencimento: Mapped[date] = mapped_column(
+        Date,
+        nullable=False
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30),
+        default="pendente",
+        nullable=False
+    )
+
 class ProcessoAssociadoDB(Base):
     __tablename__ = "processo_associado"
 
