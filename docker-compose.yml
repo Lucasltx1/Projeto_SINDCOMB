@@ -9,7 +9,10 @@ services:
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    networks:
+      - web
 
   backend:
     build:
@@ -18,12 +21,27 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
       - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     environment:
-      SINDCOMB_AUTH_SECRET: ${SINDCOMB_AUTH_SECRET:-dev-only-change-me-at-least-32-characters}
-      SINDCOMB_ACCESS_TOKEN_MINUTES: ${SINDCOMB_ACCESS_TOKEN_MINUTES:-480}
+      SINDCOMB_ENVIRONMENT: ${SINDCOMB_ENVIRONMENT:?Set SINDCOMB_ENVIRONMENT to development or production}
+      SINDCOMB_AUTH_SECRET: ${SINDCOMB_AUTH_SECRET:?Set a unique SINDCOMB_AUTH_SECRET}
+      SINDCOMB_EMAIL_ENCRYPTION_KEY: ${SINDCOMB_EMAIL_ENCRYPTION_KEY:?Set a Fernet SINDCOMB_EMAIL_ENCRYPTION_KEY}
+      SINDCOMB_CORS_ORIGINS: ${SINDCOMB_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      SINDCOMB_ACCESS_TOKEN_MINUTES: ${SINDCOMB_ACCESS_TOKEN_MINUTES:-60}
       SINDCOMB_EMAIL_VERIFICATION_HOURS: ${SINDCOMB_EMAIL_VERIFICATION_HOURS:-24}
+      SINDCOMB_PASSWORD_RESET_HOURS: ${SINDCOMB_PASSWORD_RESET_HOURS:-1}
+      SINDCOMB_PASSWORD_RESET_COOLDOWN_SECONDS: ${SINDCOMB_PASSWORD_RESET_COOLDOWN_SECONDS:-60}
       SINDCOMB_PUBLIC_API_URL: ${SINDCOMB_PUBLIC_API_URL:-http://localhost:8000}
-      SINDCOMB_SENHA_INICIAL: ${SINDCOMB_SENHA_INICIAL:-}
+      SINDCOMB_PUBLIC_APP_URL: ${SINDCOMB_PUBLIC_APP_URL:-http://localhost:3000}
       SINDCOMB_BOOTSTRAP_ADMIN_PASSWORD: ${SINDCOMB_BOOTSTRAP_ADMIN_PASSWORD:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -34,22 +52,53 @@ services:
       SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
       DATAJUD_API_KEY: ${DATAJUD_API_KEY:-}
       SINDCOMB_ML_BASE_URL: http://qwen-ml:8000/v1
-      SINDCOMB_ML_API_KEY: ${SINDCOMB_ML_API_KEY:-dev-only-token}
+      SINDCOMB_ML_API_KEY: ${SINDCOMB_ML_API_KEY:?Set a unique SINDCOMB_ML_API_KEY}
       SINDCOMB_ML_MODEL: sindcomb-qwen
-      DATABASE_URL: postgresql+psycopg://sindcomb:${POSTGRES_PASSWORD:-dev-only-password}@postgres:5432/sindcomb
+      SINDCOMB_STORAGE_DIR: /app/storage
+      SINDCOMB_MAX_UPLOAD_MB: ${SINDCOMB_MAX_UPLOAD_MB:-20}
+      SINDCOMB_SYNC_INTERVAL_MINUTES: ${SINDCOMB_SYNC_INTERVAL_MINUTES:-60}
+      SINDCOMB_SYNC_FAILURE_RETRY_MINUTES: ${SINDCOMB_SYNC_FAILURE_RETRY_MINUTES:-5}
+      SINDCOMB_SYNC_INITIAL_DELAY_SECONDS: ${SINDCOMB_SYNC_INITIAL_DELAY_SECONDS:-30}
+      SINDCOMB_SYNC_MAX_ATTEMPTS: ${SINDCOMB_SYNC_MAX_ATTEMPTS:-3}
+      SINDCOMB_SYNC_RETRY_BASE_SECONDS: ${SINDCOMB_SYNC_RETRY_BASE_SECONDS:-2}
+      SINDCOMB_WORKER_POLL_SECONDS: ${SINDCOMB_WORKER_POLL_SECONDS:-15}
+      SINDCOMB_EMAIL_MAX_ATTEMPTS: ${SINDCOMB_EMAIL_MAX_ATTEMPTS:-8}
+      SINDCOMB_EMAIL_RETRY_BASE_SECONDS: ${SINDCOMB_EMAIL_RETRY_BASE_SECONDS:-60}
+      SINDCOMB_EMAIL_RETRY_MAX_SECONDS: ${SINDCOMB_EMAIL_RETRY_MAX_SECONDS:-3600}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique POSTGRES_PASSWORD}
+      DATABASE_URL: "postgresql+psycopg://sindcomb:${POSTGRES_PASSWORD:?Set a unique POSTGRES_PASSWORD}@postgres:5432/sindcomb"
       REDIS_URL: redis://redis:6379/0
+    volumes:
+      - backend_uploads:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - web
+      - data
+      - ml
+
+  backend-tests:
+    image: projeto_sindcomb-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: ["tests"]
+    working_dir: /app
+    command: ["python", "-m", "unittest", "discover", "-s", "/tests", "-v"]
+    volumes:
+      - ./backend/tests:/tests:ro
+    environment:
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
 
   postgres:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: sindcomb
       POSTGRES_USER: sindcomb
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-only-password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/database/001_postgresql_schema.sql:/docker-entrypoint-initdb.d/001_postgresql_schema.sql:ro
@@ -58,12 +107,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - data
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -71,6 +120,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - data
 
   qwen-ml:
     image: vllm/vllm-openai:v0.29.0
@@ -88,8 +139,9 @@ services:
       - "0.85"
       - --max-model-len
       - "8192"
-      - --api-key
-      - ${SINDCOMB_ML_API_KEY:-dev-only-token}
+    environment:
+      VLLM_API_KEY: ${SINDCOMB_ML_API_KEY:?Set a unique SINDCOMB_ML_API_KEY}
+      VLLM_NO_USAGE_STATS: "1"
     shm_size: "8gb"
     volumes:
       - qwen_model_cache:/root/.cache/huggingface
@@ -101,9 +153,18 @@ services:
               count: all
               capabilities: [gpu]
     # Sem ports publicados: apenas os outros containers da rede Compose acessam o modelo.
+    networks:
+      - ml
 
 volumes:
   frontend_node_modules:
   postgres_data:
+  backend_uploads:
   redis_data:
   qwen_model_cache:
+
+networks:
+  web:
+  data:
+    internal: true
+  ml:

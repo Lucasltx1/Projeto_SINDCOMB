@@ -7,16 +7,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # O projeto usa uv para instalar as dependências declaradas no pyproject.toml.
-RUN pip install --no-cache-dir uv
+RUN pip install --no-cache-dir uv==0.13.1
 
-COPY pyproject.toml ./
-RUN uv sync --no-dev --no-install-project
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY app ./app
 
 # Executa a API sem privilégios de root.
 RUN addgroup --system app && \
     adduser --system --ingroup app app && \
+    mkdir -p /app/storage && \
     chown -R app:app /app
 USER app
 

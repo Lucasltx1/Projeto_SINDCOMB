@@ -8,14 +8,23 @@ from sqlalchemy.orm import Session
 from .models import (
     AdministradorDB,
     AssociadoDB,
+    AssociadoNotificacaoDB,
     AuditoriaDB,
+    DocumentoDB,
+    EmailOutboxDB,
     JuridicoDB,
     LinhaTempoDB,
+    ModeloPeticaoDB,
+    NotificacaoDB,
     PermissaoProcessoDB,
+    PeticaoDB,
+    PrazoDB,
     ProcessoAssociadoDB,
     ProcessoDB,
     RegistroSincronizacao,
     UsuarioDB,
+    UsuarioNotificacaoDB,
+    VersaoPeticaoDB,
 )
 from .numero_cnj import numero_cnj_sem_formatacao
 from .schemas import HistoricoStatus, MovimentacaoRegistro, ProcessoCandidato, ProcessoRegistro, ResultadoTriagem
@@ -94,6 +103,7 @@ def limpar_referencias_pessoa(
     sessao: Session,
     referencias: list[str | None],
     id_usuario: int | None = None,
+    id_associado: int | None = None,
 ) -> int:
     """Anonimiza dados e triagens associados a uma pessoa removida do cadastro."""
     termos = {
@@ -199,6 +209,113 @@ def limpar_referencias_pessoa(
                 processos_com_referencia.add(sincronizacao.id_processo)
             registros_alterados += 1
 
+    notificacoes = sessao.scalars(select(NotificacaoDB)).all()
+    for notificacao in notificacoes:
+        mudou = False
+        for campo in ("titulo", "mensagem"):
+            valor = getattr(notificacao, campo)
+            novo_valor, foi_alterado = _sanitizar_valor(valor, termos)
+            if foi_alterado:
+                setattr(notificacao, campo, novo_valor)
+                mudou = True
+        if mudou:
+            prazo = sessao.get(PrazoDB, notificacao.id_prazo) if notificacao.id_prazo is not None else None
+            if prazo is not None:
+                processos_com_referencia.add(prazo.id_processo)
+            registros_alterados += 1
+
+    if id_usuario is not None:
+        sessao.execute(
+            delete(UsuarioNotificacaoDB).where(UsuarioNotificacaoDB.id_usuario == id_usuario)
+        )
+    if id_associado is not None:
+        sessao.execute(
+            delete(AssociadoNotificacaoDB).where(
+                AssociadoNotificacaoDB.id_associado == id_associado
+            )
+        )
+
+    registros_textuais = (
+        (DocumentoDB, ("nome",), "id_usuario"),
+        (PeticaoDB, ("tipo", "descricao"), "id_usuario"),
+        (VersaoPeticaoDB, ("conteudo",), "id_usuario"),
+        (ModeloPeticaoDB, ("nome", "tipo", "conteudo"), "criado_por"),
+        (PrazoDB, ("descricao",), "id_usuario"),
+    )
+    for modelo, campos, campo_usuario in registros_textuais:
+        for registro in sessao.scalars(select(modelo)).all():
+            mudou = False
+            conteudo_alterado = False
+            for campo in campos:
+                valor = getattr(registro, campo)
+                if isinstance(valor, str):
+                    novo_valor, foi_alterado = _sanitizar_valor(valor, termos)
+                    if foi_alterado:
+                        setattr(registro, campo, novo_valor)
+                        mudou = True
+                        conteudo_alterado = True
+            if id_usuario is not None and getattr(registro, campo_usuario) == id_usuario:
+                setattr(registro, campo_usuario, None)
+                mudou = True
+            if mudou:
+                registros_alterados += 1
+            if conteudo_alterado:
+                processo_id = getattr(registro, "id_processo", None)
+                if processo_id is None and isinstance(registro, VersaoPeticaoDB):
+                    peticao = sessao.get(PeticaoDB, registro.id_peticao)
+                    processo_id = peticao.id_processo if peticao is not None else None
+                if processo_id is not None:
+                    processos_com_referencia.add(processo_id)
+
+    from .email_outbox import descriptografar_corpo_email, proteger_corpo_email
+
+    for email in sessao.scalars(select(EmailOutboxDB)).all():
+        mudou = False
+        destinatario, destinatario_alterado = _sanitizar_valor(email.destinatario, termos)
+        if destinatario_alterado:
+            email.destinatario = str(destinatario)
+            if email.status == "pendente":
+                email.status = "cancelado"
+            email.assunto = "[referência removida]"
+            email.corpo = ""
+            email.ultimo_erro = None
+            mudou = True
+        else:
+            if email.status == "pendente":
+                try:
+                    corpo_aberto = descriptografar_corpo_email(email.corpo)
+                except ValueError:
+                    email.status = "cancelado"
+                    email.corpo = ""
+                    email.assunto = "[mensagem cancelada]"
+                    email.ultimo_erro = "Mensagem protegida indisponível após anonimização."
+                    mudou = True
+                else:
+                    corpo_sanitizado, corpo_alterado = _sanitizar_valor(corpo_aberto, termos)
+                    if corpo_alterado:
+                        email.corpo = proteger_corpo_email(str(corpo_sanitizado))
+                        mudou = True
+            else:
+                # Os corpos enviados/cancelados já são apagados; esta limpeza cobre legados.
+                if email.corpo:
+                    try:
+                        corpo_aberto = descriptografar_corpo_email(email.corpo)
+                    except ValueError:
+                        corpo_aberto = email.corpo
+                    corpo_sanitizado, corpo_alterado = _sanitizar_valor(corpo_aberto, termos)
+                    if corpo_alterado:
+                        email.corpo = ""
+                        mudou = True
+            for campo in ("assunto", "ultimo_erro"):
+                valor = getattr(email, campo)
+                if isinstance(valor, str):
+                    novo_valor, foi_alterado = _sanitizar_valor(valor, termos)
+                    if foi_alterado:
+                        setattr(email, campo, novo_valor)
+                        mudou = True
+        if mudou:
+            registros_alterados += 1
+
     triagem_revisao = {
         "relevancia": "revisar",
         "justificativa": "Triagem invalidada após a remoção de uma referência do cadastro.",
@@ -285,6 +402,7 @@ def _para_schema(sessao: Session, row: ProcessoDB) -> ProcessoRegistro:
             "dados": dados_json,
             "triagem": triagem_json,
             "status": _status_api(row.status),
+            "arquivado": row.arquivado,
             "criado_por": row.criado_por or "sistema",
             "criado_em": row.criado_em,
             "movimentacoes": movimentacoes,
@@ -293,8 +411,25 @@ def _para_schema(sessao: Session, row: ProcessoDB) -> ProcessoRegistro:
     )
 
 
-def listar(sessao: Session, relevancia: str | None = None) -> list[ProcessoRegistro]:
-    linhas = sessao.scalars(select(ProcessoDB).order_by(ProcessoDB.criado_em.desc())).all()
+def listar(
+    sessao: Session,
+    relevancia: str | None = None,
+    arquivado: bool | None = False,
+    *,
+    usuario_id: int | None = None,
+) -> list[ProcessoRegistro]:
+    consulta = select(ProcessoDB)
+    if usuario_id is not None:
+        consulta = consulta.where(
+            ProcessoDB.id_processo.in_(
+                select(PermissaoProcessoDB.id_processo).where(
+                    PermissaoProcessoDB.id_usuario == usuario_id
+                )
+            )
+        )
+    if arquivado is not None:
+        consulta = consulta.where(ProcessoDB.arquivado.is_(arquivado))
+    linhas = sessao.scalars(consulta.order_by(ProcessoDB.criado_em.desc())).all()
     registros = [_para_schema(sessao, linha) for linha in linhas]
     if relevancia:
         registros = [registro for registro in registros if registro.triagem.relevancia == relevancia]
@@ -378,7 +513,9 @@ def _adicionar_historico(sessao: Session, processo_id: int, historico: Historico
     )
 
 
-def adicionar(sessao: Session, processo: ProcessoRegistro) -> ProcessoRegistro:
+def adicionar(
+    sessao: Session, processo: ProcessoRegistro, *, commit: bool = True
+) -> ProcessoRegistro:
     linha = ProcessoDB(
         numero_processo=processo.dados.numero,
         tribunal=processo.dados.tribunal,
@@ -387,7 +524,7 @@ def adicionar(sessao: Session, processo: ProcessoRegistro) -> ProcessoRegistro:
         assunto=processo.dados.assunto,
         status=processo.status,
         data_encerramento=date.today() if processo.status == "encerrado" else None,
-        arquivado=processo.status == "encerrado",
+        arquivado=processo.arquivado,
         dados_json=processo.dados.model_dump(mode="json"),
         triagem_json=processo.triagem.model_dump(mode="json"),
         criado_por=processo.criado_por,
@@ -420,18 +557,23 @@ def adicionar(sessao: Session, processo: ProcessoRegistro) -> ProcessoRegistro:
     for historico in processo.historico_status:
         _adicionar_historico(sessao, linha.id_processo, historico)
 
-    sessao.commit()
-    sessao.refresh(linha)
+    if commit:
+        sessao.commit()
+        sessao.refresh(linha)
+    else:
+        sessao.flush()
     return _para_schema(sessao, linha)
 
 
-def salvar(sessao: Session, processo: ProcessoRegistro) -> ProcessoRegistro:
+def salvar(
+    sessao: Session, processo: ProcessoRegistro, *, commit: bool = True
+) -> ProcessoRegistro:
     identificador = _id_numero(processo.id)
     if identificador is None:
-        return adicionar(sessao, processo)
+        return adicionar(sessao, processo, commit=commit)
     linha = sessao.get(ProcessoDB, identificador)
     if linha is None:
-        return adicionar(sessao, processo)
+        return adicionar(sessao, processo, commit=commit)
 
     atual = _para_schema(sessao, linha)
     linha.numero_processo = processo.dados.numero
@@ -440,8 +582,12 @@ def salvar(sessao: Session, processo: ProcessoRegistro) -> ProcessoRegistro:
     linha.tipo = processo.dados.classe
     linha.assunto = processo.dados.assunto
     linha.status = processo.status
-    linha.arquivado = processo.status == "encerrado"
-    linha.data_encerramento = date.today() if processo.status == "encerrado" else None
+    linha.arquivado = processo.arquivado
+    if processo.status == "encerrado":
+        if atual.status != "encerrado" or linha.data_encerramento is None:
+            linha.data_encerramento = date.today()
+    else:
+        linha.data_encerramento = None
     linha.dados_json = processo.dados.model_dump(mode="json")
     linha.triagem_json = processo.triagem.model_dump(mode="json")
     linha.atualizado_em = datetime.now(timezone.utc)
@@ -451,8 +597,11 @@ def salvar(sessao: Session, processo: ProcessoRegistro) -> ProcessoRegistro:
     for historico in processo.historico_status[len(atual.historico_status):]:
         _adicionar_historico(sessao, linha.id_processo, historico)
 
-    sessao.commit()
-    sessao.refresh(linha)
+    if commit:
+        sessao.commit()
+        sessao.refresh(linha)
+    else:
+        sessao.flush()
     return _para_schema(sessao, linha)
 
 

@@ -8,7 +8,7 @@ import os
 import time
 from typing import Literal
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from .models import AdministradorDB, JuridicoDB, UsuarioDB
 
 Papel = Literal["administrador", "advogado", "visualizador"]
 _bearer = HTTPBearer(auto_error=False)
+_COOKIE_SESSAO = "sindcomb_access_token"
 
 
 class UsuarioAtual(BaseModel):
@@ -40,11 +41,12 @@ def criar_access_token(usuario: UsuarioDB, papel: Papel) -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Configure SINDCOMB_AUTH_SECRET com pelo menos 32 caracteres.",
         )
-    duracao = max(300, int(os.getenv("SINDCOMB_ACCESS_TOKEN_MINUTES", "480")))
+    duracao = duracao_access_token_minutos()
     cabecalho = {"alg": "HS256", "typ": "JWT"}
     payload = {
         "sub": str(usuario.id_usuario),
         "papel": papel,
+        "ver": usuario.token_version,
         "iat": int(time.time()),
         "exp": int(time.time()) + duracao * 60,
     }
@@ -60,14 +62,36 @@ def criar_access_token(usuario: UsuarioDB, papel: Papel) -> str:
     return f"{mensagem}.{parte_assinatura}"
 
 
+def duracao_access_token_minutos() -> int:
+    try:
+        minutos_configurados = int(os.getenv("SINDCOMB_ACCESS_TOKEN_MINUTES", "60"))
+    except ValueError:
+        minutos_configurados = 60
+    return min(max(5, minutos_configurados), 60)
+
+
+def criar_token_csrf(access_token: str) -> str:
+    segredo = os.getenv("SINDCOMB_AUTH_SECRET", "").encode("utf-8")
+    return base64.urlsafe_b64encode(
+        hmac.new(segredo, b"csrf:" + access_token.encode("ascii"), hashlib.sha256).digest()
+    ).decode("ascii").rstrip("=")
+
+
 def obter_usuario_atual(
+    request: Request = None,  # type: ignore[assignment]  # FastAPI injeta Request.
     credenciais: HTTPAuthorizationCredentials | None = Depends(_bearer),
     sessao: Session = Depends(obter_sessao),
 ) -> UsuarioAtual:
-    if credenciais is None or credenciais.scheme.lower() != "bearer":
+    token = (
+        credenciais.credentials
+        if credenciais is not None and credenciais.scheme.lower() == "bearer"
+        else request.cookies.get(_COOKIE_SESSAO) if request is not None else None
+    )
+    usa_cookie = credenciais is None or credenciais.scheme.lower() != "bearer"
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token Bearer obrigatório.",
+            detail="Autenticação obrigatória.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -79,11 +103,12 @@ def obter_usuario_atual(
         )
 
     try:
-        parte_cabecalho, parte_payload, parte_assinatura = credenciais.credentials.split(".")
+        parte_cabecalho, parte_payload, parte_assinatura = token.split(".")
         cabecalho = json.loads(_base64url_decode(parte_cabecalho))
         payload = json.loads(_base64url_decode(parte_payload))
         assinatura_recebida = _base64url_decode(parte_assinatura)
         identificador = int(payload["sub"])
+        versao_token = int(payload.get("ver", 0))
         expiracao = int(payload["exp"])
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as erro:
         raise HTTPException(status_code=401, detail="Token inválido.") from erro
@@ -98,9 +123,19 @@ def obter_usuario_atual(
     if expiracao <= time.time():
         raise HTTPException(status_code=401, detail="Token expirado.")
 
+    token_csrf = criar_token_csrf(token)
+    if request is not None:
+        request.state.csrf_token = token_csrf
+    if usa_cookie and request is not None and request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+        enviado = request.headers.get("X-CSRF-Token", "")
+        if not hmac.compare_digest(enviado, token_csrf):
+            raise HTTPException(status_code=403, detail="Token CSRF ausente ou inválido.")
+
     usuario = sessao.get(UsuarioDB, identificador)
     if usuario is None or not usuario.ativo:
         raise HTTPException(status_code=401, detail="Usuário inativo ou inexistente.")
+    if versao_token != usuario.token_version:
+        raise HTTPException(status_code=401, detail="Sessão invalidada. Entre novamente.")
     eh_administrador = sessao.get(AdministradorDB, identificador) is not None
     if not eh_administrador and not usuario.email_verificado:
         raise HTTPException(status_code=403, detail="Confirme o e-mail antes de entrar.")

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { LimparTokenLegado } from "@/components/security/limpar-token-legado";
 
 export const metadata: Metadata = {
   title: "SINDCOMB | Acompanhamento Processual",
@@ -12,7 +13,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
   return (
     <html lang="pt-BR">
       <TooltipProvider>
-      <body>{children}</body>
+      <body>
+        <LimparTokenLegado />
+        {children}
+      </body>
       </TooltipProvider>
     </html>
   );

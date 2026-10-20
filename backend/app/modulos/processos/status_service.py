@@ -32,7 +32,7 @@ def _cliente() -> AsyncOpenAI:
         base_url=os.getenv("SINDCOMB_ML_BASE_URL", "http://localhost:8000/v1"),
         api_key=os.getenv("SINDCOMB_ML_API_KEY", "dev-only-token"),
         timeout=30.0,
-        max_retries=1,
+        max_retries=3,
     )
 
 

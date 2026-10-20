@@ -255,7 +255,7 @@ ALTER TABLE public.permissao_processo ALTER COLUMN id_permissao ADD GENERATED AL
 CREATE TABLE public.peticao (
     id_peticao bigint NOT NULL,
     id_processo bigint NOT NULL,
-    id_usuario bigint NOT NULL,
+    id_usuario bigint,
     tipo character varying(100) NOT NULL,
     descricao text,
     data_peticao timestamp with time zone DEFAULT now() NOT NULL,
@@ -284,7 +284,7 @@ ALTER TABLE public.peticao ALTER COLUMN id_peticao ADD GENERATED ALWAYS AS IDENT
 CREATE TABLE public.prazo (
     id_prazo bigint NOT NULL,
     id_processo bigint NOT NULL,
-    id_usuario bigint NOT NULL,
+    id_usuario bigint,
     descricao text NOT NULL,
     data_inicio date,
     data_vencimento date NOT NULL,
@@ -980,7 +980,7 @@ ALTER TABLE ONLY public.peticao
 --
 
 ALTER TABLE ONLY public.peticao
-    ADD CONSTRAINT peticao_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuario(id_usuario) ON DELETE RESTRICT;
+    ADD CONSTRAINT peticao_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuario(id_usuario) ON DELETE SET NULL;
 
 
 --
@@ -996,7 +996,7 @@ ALTER TABLE ONLY public.prazo
 --
 
 ALTER TABLE ONLY public.prazo
-    ADD CONSTRAINT prazo_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuario(id_usuario) ON DELETE RESTRICT;
+    ADD CONSTRAINT prazo_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuario(id_usuario) ON DELETE SET NULL;
 
 
 --

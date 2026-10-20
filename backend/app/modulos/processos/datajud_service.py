@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 from typing import Any
@@ -8,6 +9,22 @@ from .numero_cnj import numero_cnj_sem_formatacao
 from .schemas import ProcessoCandidato
 
 DATAJUD_BASE_URL = "https://api-publica.datajud.cnj.jus.br"
+
+
+def _limite_tentativas() -> int:
+    try:
+        tentativas = int(os.getenv("SINDCOMB_SYNC_MAX_ATTEMPTS", "3"))
+    except ValueError:
+        tentativas = 3
+    return min(max(tentativas, 1), 6)
+
+
+def _atraso_base_segundos() -> int:
+    try:
+        atraso = int(os.getenv("SINDCOMB_SYNC_RETRY_BASE_SECONDS", "2"))
+    except ValueError:
+        atraso = 2
+    return min(max(atraso, 1), 30)
 
 
 async def buscar_por_numero(numero: str, tribunal_alias: str, limite: int = 10) -> list[dict[str, Any]]:
@@ -28,10 +45,23 @@ async def buscar_por_numero(numero: str, tribunal_alias: str, limite: int = 10) 
     }
     headers = {"Authorization": f"APIKey {api_key}", "Content-Type": "application/json"}
 
-    async with httpx.AsyncClient(timeout=25.0) as client:
-        resposta = await client.post(url, json=consulta, headers=headers)
-        resposta.raise_for_status()
-        payload = resposta.json()
+    limite_tentativas = _limite_tentativas()
+    for tentativa in range(1, limite_tentativas + 1):
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                resposta = await client.post(url, json=consulta, headers=headers)
+                resposta.raise_for_status()
+                payload = resposta.json()
+            break
+        except httpx.HTTPStatusError as erro:
+            retentavel = erro.response.status_code in {408, 429} or erro.response.status_code >= 500
+            if not retentavel or tentativa == limite_tentativas:
+                raise
+        except httpx.TransportError:
+            if tentativa == limite_tentativas:
+                raise
+        base = _atraso_base_segundos()
+        await asyncio.sleep(min(base * (2 ** (tentativa - 1)), 30))
 
     hits = (payload.get("hits") or {}).get("hits") or []
     return [item["_source"] for item in hits if isinstance(item, dict) and isinstance(item.get("_source"), dict)]
@@ -63,7 +93,9 @@ def extrair_atualizacao(fonte: dict[str, Any]) -> dict[str, str | None]:
         validos = [item for item in movimentos if isinstance(item, dict)]
         if validos:
             ultimo = max(validos, key=lambda item: str(item.get("dataHora") or ""))
-            nome = ultimo.get("nome") or (ultimo.get("movimentoNacional") or {}).get("nome")
+            movimento_nacional = ultimo.get("movimentoNacional")
+            nome_nacional = movimento_nacional.get("nome") if isinstance(movimento_nacional, dict) else None
+            nome = ultimo.get("nome") or nome_nacional
             complemento = ultimo.get("complemento") or ultimo.get("complementosTabelados")
             if isinstance(complemento, list):
                 complemento = "; ".join(

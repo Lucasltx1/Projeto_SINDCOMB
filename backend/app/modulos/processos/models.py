@@ -6,7 +6,9 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Identity,
+    Integer,
     JSON,
     String,
     Text,
@@ -29,6 +31,7 @@ class UsuarioDB(Base):
     primeiro_acesso: Mapped[bool] = mapped_column(Boolean, default=True)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     email_verificado: Mapped[bool] = mapped_column(Boolean, default=False)
+    token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class AdministradorDB(Base):
@@ -203,6 +206,34 @@ class RegistroSincronizacao(Base):
     quantidade_atualizacoes: Mapped[int] = mapped_column(default=0)
 
 
+class EmailOutboxDB(Base):
+    """Fila persistente para envio e novas tentativas de e-mail."""
+
+    __tablename__ = "email_outbox"
+    __table_args__ = (
+        Index("ix_email_outbox_status_next", "status", "proxima_tentativa"),
+    )
+
+    id_email: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    destinatario: Mapped[str] = mapped_column(String(255))
+    assunto: Mapped[str] = mapped_column(String(255))
+    corpo: Mapped[str] = mapped_column(Text)
+    categoria: Mapped[str] = mapped_column(String(50), default="processo")
+    id_processo: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("processo.id_processo", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(30), default="pendente", index=True)
+    tentativas: Mapped[int] = mapped_column(Integer, default=0)
+    proxima_tentativa: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    enviado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ultimo_erro: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class TokenVerificacaoDB(Base):
     __tablename__ = "token_verificacao_usuario"
     __table_args__ = (UniqueConstraint("token_hash", name="token_verificacao_usuario_token_hash_key"),)
@@ -219,3 +250,151 @@ class TokenVerificacaoDB(Base):
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class DocumentoDB(Base):
+    """Metadados de um arquivo associado a um processo ou a uma petição."""
+
+    __tablename__ = "documento"
+
+    id_documento: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_processo: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("processo.id_processo", ondelete="RESTRICT"), index=True
+    )
+    id_usuario: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    nome: Mapped[str] = mapped_column(String(255))
+    tipo: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    data_upload: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    local_armazenamento: Mapped[str] = mapped_column(Text)
+    tamanho: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    hash_arquivo: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    id_peticao: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("peticao.id_peticao", ondelete="RESTRICT"), nullable=True, unique=True
+    )
+
+
+class PeticaoDB(Base):
+    """Cadastro da petição; o conteúdo de cada edição fica em VersaoPeticaoDB."""
+
+    __tablename__ = "peticao"
+
+    id_peticao: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_processo: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("processo.id_processo", ondelete="RESTRICT"), index=True
+    )
+    id_usuario: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    tipo: Mapped[str] = mapped_column(String(100))
+    descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data_peticao: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    status: Mapped[str] = mapped_column(String(30), default="rascunho", index=True)
+
+
+class VersaoPeticaoDB(Base):
+    """Snapshot imutável do conteúdo de uma versão da petição."""
+
+    __tablename__ = "versao_peticao"
+    __table_args__ = (
+        UniqueConstraint("id_peticao", "numero_versao", name="versao_peticao_numero_key"),
+    )
+
+    id_versao: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_peticao: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("peticao.id_peticao", ondelete="CASCADE"), index=True
+    )
+    numero_versao: Mapped[int] = mapped_column(BigInteger)
+    conteudo: Mapped[str] = mapped_column(Text)
+    id_usuario: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    data_versao: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class ModeloPeticaoDB(Base):
+    """Modelo reutilizável com variáveis no formato {{nome_da_variavel}}."""
+
+    __tablename__ = "modelo_peticao"
+    __table_args__ = (UniqueConstraint("nome", name="modelo_peticao_nome_key"),)
+
+    id_modelo: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    nome: Mapped[str] = mapped_column(String(150))
+    tipo: Mapped[str] = mapped_column(String(100))
+    conteudo: Mapped[str] = mapped_column(Text)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    criado_por: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class PrazoDB(Base):
+    """Prazo vinculado a processo e advogado responsável."""
+
+    __tablename__ = "prazo"
+
+    id_prazo: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_processo: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("processo.id_processo", ondelete="RESTRICT"), index=True
+    )
+    id_usuario: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True, index=True
+    )
+    descricao: Mapped[str] = mapped_column(Text)
+    data_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_vencimento: Mapped[date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="pendente", index=True)
+
+
+class NotificacaoDB(Base):
+    """Registro legado de notificação do esquema PostgreSQL importado."""
+
+    __tablename__ = "notificacao"
+
+    id_notificacao: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    titulo: Mapped[str] = mapped_column(String(200))
+    mensagem: Mapped[str] = mapped_column(Text)
+    data_criacao: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    status_leitura: Mapped[str] = mapped_column(String(20), default="nao_aplicavel")
+    data_envio_email: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    id_prazo: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("prazo.id_prazo", ondelete="SET NULL"), nullable=True
+    )
+
+
+class UsuarioNotificacaoDB(Base):
+    __tablename__ = "usuario_notificacao"
+
+    id_usuario: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="CASCADE"), primary_key=True
+    )
+    id_notificacao: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("notificacao.id_notificacao", ondelete="CASCADE"), primary_key=True
+    )
+    data_leitura: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_leitura: Mapped[str] = mapped_column(String(20), default="nao_lida")
+
+
+class AssociadoNotificacaoDB(Base):
+    __tablename__ = "associado_notificacao"
+
+    id_associado: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("associado.id_associado", ondelete="CASCADE"), primary_key=True
+    )
+    id_notificacao: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("notificacao.id_notificacao", ondelete="CASCADE"), primary_key=True
+    )
+    data_envio_email: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_envio: Mapped[str] = mapped_column(String(20), default="pendente")

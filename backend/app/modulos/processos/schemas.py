@@ -28,6 +28,9 @@ class ProcessoCandidato(BaseModel):
     associados_mencionados: list[str] = Field(default_factory=list, max_length=100)
     ultima_movimentacao: str | None = Field(default=None, max_length=20000)
     fonte_url: HttpUrl | None = None
+    origem_dados: Literal["datajud", "djen"] | None = None
+    consultado_em: datetime | None = None
+    data_ultima_verificacao_fonte: datetime | None = None
 
     @field_validator("numero")
     @classmethod
@@ -55,6 +58,7 @@ class MovimentacaoRegistro(BaseModel):
     ]
     requer_atencao: bool
     fonte_url: HttpUrl | None = None
+    fonte_dados: Literal["datajud", "djen", "manual"] | None = None
     registrada_por: str
     registrada_em: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -72,6 +76,7 @@ class ProcessoRegistro(BaseModel):
     dados: ProcessoCandidato
     triagem: ResultadoTriagem
     status: StatusProcesso = "novo"
+    arquivado: bool = False
     criado_por: str
     criado_em: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     movimentacoes: list[MovimentacaoRegistro] = Field(default_factory=list)
@@ -87,6 +92,10 @@ class ResultadoSincronizacao(BaseModel):
     processos_consultados: int
     processos_com_movimentacao_nova: int
     falhas: list[str] = Field(default_factory=list)
+
+
+class TriagemSolicitacaoSaida(BaseModel):
+    mensagem: str
 
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -105,7 +114,7 @@ class LoginEntrada(BaseModel):
         max_length=255,
         validation_alias=AliasChoices("usuario", "email"),
     )
-    senha: str = Field(min_length=1, max_length=256)
+    senha: str = Field(min_length=1, max_length=128)
 
     @field_validator("usuario")
     @classmethod
@@ -119,8 +128,24 @@ class LoginEntrada(BaseModel):
 
 
 class AlteracaoSenhaEntrada(BaseModel):
-    senha_atual: str = Field(min_length=1, max_length=256)
+    senha_atual: str = Field(min_length=1, max_length=128)
     nova_senha: str = Field(min_length=12, max_length=128)
+
+
+class SolicitarRecuperacaoSenhaEntrada(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("email")
+    @classmethod
+    def validar_email(cls, valor: str) -> str:
+        return _normalizar_email(valor)
+
+
+class RedefinirSenhaEntrada(BaseModel):
+    token: str = Field(min_length=32, max_length=200)
+    nova_senha: str = Field(min_length=12, max_length=128)
+    model_config = ConfigDict(extra="forbid")
 
 
 class VerificacaoEmailEntrada(BaseModel):
@@ -137,10 +162,31 @@ class UsuarioPerfil(BaseModel):
 
 
 class LoginSaida(BaseModel):
-    access_token: str
-    token_type: Literal["bearer"] = "bearer"
+    csrf_token: str
     usuario: UsuarioPerfil
     alterar_senha_no_primeiro_acesso: bool
+
+
+class CsrfTokenSaida(BaseModel):
+    csrf_token: str
+
+
+class AuditoriaEventoSaida(BaseModel):
+    id: int
+    usuario_id: int | None = None
+    processo_id: int | None = None
+    operacao: str
+    descricao: str | None = None
+    ocorrido_em: datetime
+    resultado: str
+    dados: dict[str, object] = Field(default_factory=dict)
+
+
+class AuditoriaListaSaida(BaseModel):
+    itens: list[AuditoriaEventoSaida]
+    total: int
+    limite: int
+    deslocamento: int
 
 
 class AdvogadoCriacao(BaseModel):

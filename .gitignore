@@ -127,6 +127,7 @@ backups/
 .cache/
 .cache-loader/
 .parcel-cache/
+.pip-tmp/
 
 #Windows
 

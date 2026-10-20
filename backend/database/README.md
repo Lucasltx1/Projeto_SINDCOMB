@@ -13,6 +13,6 @@ docker compose up -d postgres
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U sindcomb -d sindcomb -f /docker-entrypoint-initdb.d/001_postgresql_schema.sql
 ```
 
-Depois reinicie o backend. No início, ele cria as tabelas auxiliares ausentes e adiciona as colunas de extensão de forma idempotente. Não apague `postgres_data` para aplicar essas mudanças.
+Depois reinicie o backend. No início, ele cria as tabelas auxiliares ausentes e aplica extensões idempotentes. Entre elas, a autoria de petições e prazos torna-se anulável e passa a usar `ON DELETE SET NULL`, para que a exclusão administrativa de um advogado preserve o histórico sem reter sua referência de usuário. Não apague `postgres_data` para aplicar essas mudanças.
 
 A aplicação e o backend falam com o PostgreSQL pela rede interna do Compose em `postgres:5432`; a porta não precisa ser publicada no host.
