@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timezone
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -8,21 +11,35 @@ from app.nucleo.database import obter_sessao
 from .auth import UsuarioAtual, exigir_acesso_processos, exigir_advogado
 from .models import (
     AssociadoDB,
+    DocumentoDB,
     JuridicoDB,
     ModeloPeticaoDB,
+    PeticaoComentarioDB,
     PeticaoDB,
+    PeticaoProtocoloDB,
+    PeticaoRevisorDB,
+    PermissaoProcessoDB,
     ProcessoAssociadoDB,
     ProcessoDB,
     UsuarioDB,
     VersaoPeticaoDB,
 )
+from .notificacoes_service import notificar_usuarios_do_processo
 from .recursos_acesso import obter_processo_autorizado, registrar_auditoria
 from .recursos_schemas import (
     ModeloPeticaoAtualizacao,
     ModeloPeticaoEntrada,
     ModeloPeticaoSaida,
+    PeticaoComentarioAtualizacao,
+    PeticaoComentarioEntrada,
+    PeticaoComentarioResolucao,
+    PeticaoComentarioSaida,
     PeticaoAtualizacao,
     PeticaoCriacao,
+    PeticaoProtocoloEntrada,
+    PeticaoProtocoloSaida,
+    PeticaoRevisorEntrada,
+    PeticaoRevisorSaida,
     PeticaoSaida,
     PeticaoStatusEntrada,
     VersaoPeticaoSaida,
@@ -35,7 +52,7 @@ _TRANSICOES_STATUS = {
     "rascunho": {"em_revisao"},
     "em_revisao": {"rejeitada", "aprovada"},
     "rejeitada": {"em_revisao"},
-    "aprovada": {"protocolada"},
+    "aprovada": set(),
     "protocolada": set(),
 }
 
@@ -64,6 +81,44 @@ def _saida_peticao(sessao: Session, peticao: PeticaoDB) -> PeticaoSaida:
     )
 
 
+def _saidas_peticoes(
+    sessao: Session, peticoes: list[PeticaoDB]
+) -> list[PeticaoSaida]:
+    ids_peticoes = [peticao.id_peticao for peticao in peticoes]
+    if not ids_peticoes:
+        return []
+    versoes = sessao.scalars(
+        select(VersaoPeticaoDB)
+        .where(VersaoPeticaoDB.id_peticao.in_(ids_peticoes))
+        .order_by(VersaoPeticaoDB.id_peticao, VersaoPeticaoDB.numero_versao.desc())
+    ).all()
+    versao_por_peticao: dict[int, VersaoPeticaoDB] = {}
+    for versao in versoes:
+        versao_por_peticao.setdefault(versao.id_peticao, versao)
+    return [
+        PeticaoSaida(
+            id_peticao=peticao.id_peticao,
+            id_processo=peticao.id_processo,
+            id_usuario=peticao.id_usuario,
+            tipo=peticao.tipo,
+            descricao=peticao.descricao,
+            data_peticao=peticao.data_peticao,
+            status=peticao.status,
+            versao_atual=(
+                versao_por_peticao[peticao.id_peticao].numero_versao
+                if peticao.id_peticao in versao_por_peticao
+                else 0
+            ),
+            conteudo=(
+                versao_por_peticao[peticao.id_peticao].conteudo
+                if peticao.id_peticao in versao_por_peticao
+                else ""
+            ),
+        )
+        for peticao in peticoes
+    ]
+
+
 def _peticao_autorizada(
     sessao: Session,
     peticao_id: int,
@@ -76,6 +131,55 @@ def _peticao_autorizada(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Petição não encontrada.")
     obter_processo_autorizado(sessao, usuario, peticao.id_processo, edicao=edicao)
     return peticao
+
+
+def _validar_revisor(
+    sessao: Session, processo_id: int, usuario_id: int
+) -> tuple[UsuarioDB, str]:
+    linha = sessao.execute(
+        select(UsuarioDB, JuridicoDB.oab)
+        .join(JuridicoDB, JuridicoDB.id_usuario == UsuarioDB.id_usuario)
+        .join(PermissaoProcessoDB, PermissaoProcessoDB.id_usuario == UsuarioDB.id_usuario)
+        .where(
+            UsuarioDB.id_usuario == usuario_id,
+            UsuarioDB.ativo.is_(True),
+            PermissaoProcessoDB.id_processo == processo_id,
+            PermissaoProcessoDB.nivel_acesso.in_(("edicao", "total")),
+        )
+    ).first()
+    if linha is None:
+        raise HTTPException(
+            status_code=422,
+            detail="O revisor precisa ser advogado ativo autorizado a editar este processo.",
+        )
+    return linha
+
+
+def _saida_comentario_peticao(
+    sessao: Session,
+    comentario: PeticaoComentarioDB,
+    nome_autor: str | None = None,
+    *,
+    autor_carregado: bool = False,
+) -> PeticaoComentarioSaida:
+    autor = (
+        None
+        if autor_carregado or comentario.id_usuario is None
+        else sessao.get(UsuarioDB, comentario.id_usuario)
+    )
+    return PeticaoComentarioSaida(
+        id_comentario=comentario.id_comentario,
+        id_peticao=comentario.id_peticao,
+        id_versao=comentario.id_versao,
+        id_usuario=comentario.id_usuario,
+        autor=nome_autor if autor_carregado else autor.nome if autor else None,
+        conteudo="[Comentário removido]" if comentario.excluido_em else comentario.conteudo,
+        criado_em=comentario.criado_em,
+        editado_em=comentario.editado_em,
+        resolvido_em=comentario.resolvido_em,
+        resolvido_por=comentario.resolvido_por,
+        excluido_em=comentario.excluido_em,
+    )
 
 
 def _variaveis_modelo(
@@ -217,7 +321,7 @@ def listar_peticoes(
         .where(PeticaoDB.id_processo == processo_id)
         .order_by(PeticaoDB.data_peticao.desc(), PeticaoDB.id_peticao.desc())
     ).all()
-    return [_saida_peticao(sessao, peticao) for peticao in peticoes]
+    return _saidas_peticoes(sessao, peticoes)
 
 
 @router.post(
@@ -386,6 +490,376 @@ def alterar_status_peticao(
     sessao.commit()
     sessao.refresh(peticao)
     return _saida_peticao(sessao, peticao)
+
+
+@router.get(
+    "/api/v1/peticoes/{peticao_id}/revisor",
+    response_model=PeticaoRevisorSaida | None,
+)
+def obter_revisor_peticao(
+    peticao_id: int,
+    usuario: UsuarioAtual = Depends(exigir_acesso_processos),
+    sessao: Session = Depends(obter_sessao),
+) -> PeticaoRevisorSaida | None:
+    _peticao_autorizada(sessao, peticao_id, usuario)
+    linha = sessao.execute(
+        select(PeticaoRevisorDB, UsuarioDB.nome, JuridicoDB.oab)
+        .join(UsuarioDB, UsuarioDB.id_usuario == PeticaoRevisorDB.id_usuario)
+        .join(JuridicoDB, JuridicoDB.id_usuario == UsuarioDB.id_usuario)
+        .where(PeticaoRevisorDB.id_peticao == peticao_id)
+    ).first()
+    if linha is None:
+        return None
+    revisor, nome, oab = linha
+    return PeticaoRevisorSaida(
+        id_peticao=revisor.id_peticao,
+        id_usuario=revisor.id_usuario,
+        nome=nome,
+        oab=oab,
+        atribuido_por=revisor.atribuido_por,
+        atribuido_em=revisor.atribuido_em,
+    )
+
+
+@router.put(
+    "/api/v1/peticoes/{peticao_id}/revisor",
+    response_model=PeticaoRevisorSaida,
+)
+def atribuir_revisor_peticao(
+    peticao_id: int,
+    entrada: PeticaoRevisorEntrada,
+    usuario: UsuarioAtual = Depends(exigir_advogado),
+    sessao: Session = Depends(obter_sessao),
+) -> PeticaoRevisorSaida:
+    peticao = _peticao_autorizada(sessao, peticao_id, usuario, edicao=True)
+    revisor, oab = _validar_revisor(sessao, peticao.id_processo, entrada.id_usuario)
+    registro = sessao.get(PeticaoRevisorDB, peticao_id)
+    if registro is None:
+        registro = PeticaoRevisorDB(
+            id_peticao=peticao_id,
+            id_usuario=revisor.id_usuario,
+            atribuido_por=int(usuario.id),
+        )
+        sessao.add(registro)
+    else:
+        registro.id_usuario = revisor.id_usuario
+        registro.atribuido_por = int(usuario.id)
+        registro.atribuido_em = datetime.now(timezone.utc)
+    registrar_auditoria(
+        sessao,
+        usuario_id=int(usuario.id),
+        processo_id=peticao.id_processo,
+        operacao="revisor_peticao_atribuido",
+        descricao=f"Revisor atribuído à petição {peticao_id}.",
+        dados={"id_peticao": peticao_id, "id_revisor": revisor.id_usuario},
+    )
+    sessao.commit()
+    sessao.refresh(registro)
+    return PeticaoRevisorSaida(
+        id_peticao=peticao_id,
+        id_usuario=revisor.id_usuario,
+        nome=revisor.nome,
+        oab=oab,
+        atribuido_por=registro.atribuido_por,
+        atribuido_em=registro.atribuido_em,
+    )
+
+
+@router.delete(
+    "/api/v1/peticoes/{peticao_id}/revisor",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remover_revisor_peticao(
+    peticao_id: int,
+    usuario: UsuarioAtual = Depends(exigir_advogado),
+    sessao: Session = Depends(obter_sessao),
+) -> None:
+    peticao = _peticao_autorizada(sessao, peticao_id, usuario, edicao=True)
+    registro = sessao.get(PeticaoRevisorDB, peticao_id)
+    if registro is None:
+        return
+    id_revisor = registro.id_usuario
+    sessao.delete(registro)
+    registrar_auditoria(
+        sessao,
+        usuario_id=int(usuario.id),
+        processo_id=peticao.id_processo,
+        operacao="revisor_peticao_removido",
+        descricao=f"Revisor removido da petição {peticao_id}.",
+        dados={"id_peticao": peticao_id, "id_revisor": id_revisor},
+    )
+    sessao.commit()
+
+
+@router.get(
+    "/api/v1/peticoes/{peticao_id}/comentarios",
+    response_model=list[PeticaoComentarioSaida],
+)
+def listar_comentarios_peticao(
+    peticao_id: int,
+    id_versao: int | None = Query(default=None, ge=1),
+    usuario: UsuarioAtual = Depends(exigir_acesso_processos),
+    sessao: Session = Depends(obter_sessao),
+    limite: Annotated[int, Query(ge=1, le=100)] = 50,
+    deslocamento: Annotated[int, Query(ge=0)] = 0,
+) -> list[PeticaoComentarioSaida]:
+    _peticao_autorizada(sessao, peticao_id, usuario)
+    consulta = (
+        select(PeticaoComentarioDB, UsuarioDB.nome)
+        .outerjoin(UsuarioDB, UsuarioDB.id_usuario == PeticaoComentarioDB.id_usuario)
+        .where(PeticaoComentarioDB.id_peticao == peticao_id)
+    )
+    if id_versao is not None:
+        versao = sessao.get(VersaoPeticaoDB, id_versao)
+        if versao is None or versao.id_peticao != peticao_id:
+            raise HTTPException(status_code=404, detail="Versão da petição não encontrada.")
+        consulta = consulta.where(PeticaoComentarioDB.id_versao == id_versao)
+    comentarios = sessao.execute(
+        consulta.order_by(PeticaoComentarioDB.criado_em, PeticaoComentarioDB.id_comentario)
+        .limit(limite)
+        .offset(deslocamento)
+    ).all()
+    return [
+        _saida_comentario_peticao(
+            sessao,
+            comentario,
+            nome_autor,
+            autor_carregado=True,
+        )
+        for comentario, nome_autor in comentarios
+    ]
+
+
+@router.post(
+    "/api/v1/peticoes/{peticao_id}/comentarios",
+    response_model=PeticaoComentarioSaida,
+    status_code=status.HTTP_201_CREATED,
+)
+def criar_comentario_peticao(
+    peticao_id: int,
+    entrada: PeticaoComentarioEntrada,
+    usuario: UsuarioAtual = Depends(exigir_advogado),
+    sessao: Session = Depends(obter_sessao),
+) -> PeticaoComentarioSaida:
+    peticao = _peticao_autorizada(sessao, peticao_id, usuario, edicao=True)
+    versao = sessao.get(VersaoPeticaoDB, entrada.id_versao)
+    if versao is None or versao.id_peticao != peticao_id:
+        raise HTTPException(status_code=404, detail="Versão da petição não encontrada.")
+    conteudo = entrada.conteudo.strip()
+    if not conteudo:
+        raise HTTPException(status_code=422, detail="O comentário não pode estar vazio.")
+    comentario = PeticaoComentarioDB(
+        id_peticao=peticao_id,
+        id_versao=versao.id_versao,
+        id_usuario=int(usuario.id),
+        conteudo=conteudo,
+    )
+    sessao.add(comentario)
+    sessao.flush()
+    registrar_auditoria(
+        sessao,
+        usuario_id=int(usuario.id),
+        processo_id=peticao.id_processo,
+        operacao="comentario_peticao_criado",
+        descricao=f"Comentário adicionado à versão {versao.numero_versao} da petição {peticao_id}.",
+        dados={
+            "id_peticao": peticao_id,
+            "id_versao": versao.id_versao,
+            "id_comentario": comentario.id_comentario,
+        },
+    )
+    notificar_usuarios_do_processo(
+        sessao,
+        peticao.id_processo,
+        categoria="revisao_peticao",
+        titulo="Novo comentário na revisão de petição",
+        mensagem=f"{usuario.nome} comentou a versão {versao.numero_versao} da petição {peticao_id}.",
+        chave=f"comentario-peticao:{comentario.id_comentario}",
+        exceto_usuario_id=int(usuario.id),
+    )
+    sessao.commit()
+    sessao.refresh(comentario)
+    return _saida_comentario_peticao(sessao, comentario)
+
+
+@router.patch(
+    "/api/v1/peticoes/comentarios/{comentario_id}",
+    response_model=PeticaoComentarioSaida,
+)
+def atualizar_comentario_peticao(
+    comentario_id: int,
+    entrada: PeticaoComentarioAtualizacao,
+    usuario: UsuarioAtual = Depends(exigir_advogado),
+    sessao: Session = Depends(obter_sessao),
+) -> PeticaoComentarioSaida:
+    comentario = sessao.get(PeticaoComentarioDB, comentario_id)
+    if comentario is None:
+        raise HTTPException(status_code=404, detail="Comentário de petição não encontrado.")
+    peticao = _peticao_autorizada(sessao, comentario.id_peticao, usuario, edicao=True)
+    if comentario.id_usuario != int(usuario.id):
+        raise HTTPException(status_code=403, detail="Somente o autor pode editar este comentário.")
+    if comentario.excluido_em is not None:
+        raise HTTPException(status_code=409, detail="O comentário já foi removido.")
+    conteudo = entrada.conteudo.strip()
+    if not conteudo:
+        raise HTTPException(status_code=422, detail="O comentário não pode estar vazio.")
+    comentario.conteudo = conteudo
+    comentario.editado_em = datetime.now(timezone.utc)
+    registrar_auditoria(
+        sessao,
+        usuario_id=int(usuario.id),
+        processo_id=peticao.id_processo,
+        operacao="comentario_peticao_editado",
+        descricao=f"Comentário {comentario_id} editado.",
+        dados={"id_comentario": comentario_id, "id_peticao": peticao.id_peticao},
+    )
+    sessao.commit()
+    sessao.refresh(comentario)
+    return _saida_comentario_peticao(sessao, comentario)
+
+
+@router.delete(
+    "/api/v1/peticoes/comentarios/{comentario_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def excluir_comentario_peticao(
+    comentario_id: int,
+    usuario: UsuarioAtual = Depends(exigir_advogado),
+    sessao: Session = Depends(obter_sessao),
+) -> None:
+    comentario = sessao.get(PeticaoComentarioDB, comentario_id)
+    if comentario is None:
+        raise HTTPException(status_code=404, detail="Comentário de petição não encontrado.")
+    peticao = _peticao_autorizada(sessao, comentario.id_peticao, usuario, edicao=True)
+    if comentario.id_usuario != int(usuario.id):
+        raise HTTPException(status_code=403, detail="Somente o autor pode remover este comentário.")
+    if comentario.excluido_em is not None:
+        raise HTTPException(status_code=409, detail="O comentário já foi removido.")
+    comentario.conteudo = "[Comentário removido]"
+    comentario.excluido_em = datetime.now(timezone.utc)
+    registrar_auditoria(
+        sessao,
+        usuario_id=int(usuario.id),
+        processo_id=peticao.id_processo,
+        operacao="comentario_peticao_removido",
+        descricao=f"Comentário {comentario_id} removido.",
+        dados={"id_comentario": comentario_id, "id_peticao": peticao.id_peticao},
+    )
+    sessao.commit()
+
+
+@router.patch(
+    "/api/v1/peticoes/comentarios/{comentario_id}/resolucao",
+    response_model=PeticaoComentarioSaida,
+)
+def resolver_comentario_peticao(
+    comentario_id: int,
+    entrada: PeticaoComentarioResolucao,
+    usuario: UsuarioAtual = Depends(exigir_advogado),
+    sessao: Session = Depends(obter_sessao),
+) -> PeticaoComentarioSaida:
+    comentario = sessao.get(PeticaoComentarioDB, comentario_id)
+    if comentario is None:
+        raise HTTPException(status_code=404, detail="Comentário de petição não encontrado.")
+    peticao = _peticao_autorizada(sessao, comentario.id_peticao, usuario, edicao=True)
+    if comentario.excluido_em is not None:
+        raise HTTPException(status_code=409, detail="Não é possível resolver um comentário removido.")
+    agora = datetime.now(timezone.utc)
+    comentario.resolvido_em = agora if entrada.resolvido else None
+    comentario.resolvido_por = int(usuario.id) if entrada.resolvido else None
+    registrar_auditoria(
+        sessao,
+        usuario_id=int(usuario.id),
+        processo_id=peticao.id_processo,
+        operacao="comentario_peticao_resolvido" if entrada.resolvido else "comentario_peticao_reaberto",
+        descricao=f"Comentário {comentario_id} {'resolvido' if entrada.resolvido else 'reaberto'}.",
+        dados={"id_comentario": comentario_id, "id_peticao": peticao.id_peticao},
+    )
+    sessao.commit()
+    sessao.refresh(comentario)
+    return _saida_comentario_peticao(sessao, comentario)
+
+
+@router.get(
+    "/api/v1/peticoes/{peticao_id}/protocolos",
+    response_model=list[PeticaoProtocoloSaida],
+)
+def listar_protocolos_peticao(
+    peticao_id: int,
+    usuario: UsuarioAtual = Depends(exigir_acesso_processos),
+    sessao: Session = Depends(obter_sessao),
+) -> list[PeticaoProtocoloDB]:
+    _peticao_autorizada(sessao, peticao_id, usuario)
+    return list(
+        sessao.scalars(
+            select(PeticaoProtocoloDB)
+            .where(PeticaoProtocoloDB.id_peticao == peticao_id)
+            .order_by(PeticaoProtocoloDB.protocolado_em.desc(), PeticaoProtocoloDB.id_protocolo.desc())
+        ).all()
+    )
+
+
+@router.post(
+    "/api/v1/peticoes/{peticao_id}/protocolos",
+    response_model=PeticaoProtocoloSaida,
+    status_code=status.HTTP_201_CREATED,
+)
+def registrar_protocolo_peticao(
+    peticao_id: int,
+    entrada: PeticaoProtocoloEntrada,
+    usuario: UsuarioAtual = Depends(exigir_advogado),
+    sessao: Session = Depends(obter_sessao),
+) -> PeticaoProtocoloDB:
+    peticao = _peticao_autorizada(sessao, peticao_id, usuario, edicao=True)
+    if peticao.status != "aprovada":
+        raise HTTPException(
+            status_code=409,
+            detail="Somente uma petição aprovada pode receber registro de protocolo.",
+        )
+    documento = None
+    if entrada.id_documento_comprovante is not None:
+        documento = sessao.get(DocumentoDB, entrada.id_documento_comprovante)
+        if (
+            documento is None
+            or documento.id_processo != peticao.id_processo
+            or documento.id_peticao not in {None, peticao_id}
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="O comprovante precisa ser um documento deste processo e não pode pertencer a outra petição.",
+            )
+        documento.id_peticao = peticao_id
+    registro = PeticaoProtocoloDB(
+        id_peticao=peticao_id,
+        id_usuario=int(usuario.id),
+        id_documento_comprovante=documento.id_documento if documento else None,
+        numero_protocolo=entrada.numero_protocolo.strip() if entrada.numero_protocolo else None,
+        tribunal=entrada.tribunal.strip(),
+        protocolado_em=entrada.protocolado_em,
+        observacao=entrada.observacao.strip() if entrada.observacao else None,
+    )
+    sessao.add(registro)
+    sessao.flush()
+    peticao.status = "protocolada"
+    registrar_auditoria(
+        sessao,
+        usuario_id=int(usuario.id),
+        processo_id=peticao.id_processo,
+        operacao="protocolo_peticao_registrado",
+        descricao=f"Protocolo manual registrado para a petição {peticao_id}.",
+        dados={
+            "id_peticao": peticao_id,
+            "id_protocolo": registro.id_protocolo,
+            "numero_protocolo": registro.numero_protocolo,
+            "tribunal": registro.tribunal,
+            "protocolado_em": registro.protocolado_em.isoformat(),
+            "id_documento_comprovante": registro.id_documento_comprovante,
+            "origem": "registro_manual",
+        },
+    )
+    sessao.commit()
+    sessao.refresh(registro)
+    return registro
 
 
 @router.get("/api/v1/peticoes/{peticao_id}/exportar")

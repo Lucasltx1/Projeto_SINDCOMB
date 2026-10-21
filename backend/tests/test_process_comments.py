@@ -21,7 +21,10 @@ from app.modulos.processos.models import (
     ProcessoDB,
     UsuarioDB,
 )
-from app.modulos.processos.recursos_schemas import ComentarioProcessoEntrada
+from app.modulos.processos.recursos_schemas import (
+    ComentarioProcessoAtualizacao,
+    ComentarioProcessoEntrada,
+)
 from app.modulos.processos.repository import obter
 from app.modulos.processos.schemas import ProcessoCandidato
 from app.modulos.processos.status_service import ResultadoTriagemModelo
@@ -162,6 +165,47 @@ class TestComentariosProcessuais(unittest.TestCase):
                 self.sessao,
             )
         self.assertEqual(erro.exception.status_code, 422)
+
+    def test_author_can_edit_and_soft_delete_comment_with_tombstone(self):
+        self.sessao.add(
+            PermissaoProcessoDB(id_usuario=2, id_processo=10, nivel_acesso="edicao")
+        )
+        self.sessao.commit()
+        comentario = self.sessao.scalar(
+            select(ComentarioProcessoDB).where(
+                ComentarioProcessoDB.id_processo == 10
+            )
+        )
+        atualizado = comentarios_router.atualizar_comentario(
+            comentario.id_comentario,
+            ComentarioProcessoAtualizacao(conteudo="Revisar a publicação."),
+            self.advogado_um,
+            self.sessao,
+        )
+        self.assertEqual(atualizado.conteudo, "Revisar a publicação.")
+        self.assertIsNotNone(atualizado.editado_em)
+
+        with self.assertRaises(HTTPException) as erro:
+            comentarios_router.atualizar_comentario(
+                comentario.id_comentario,
+                ComentarioProcessoAtualizacao(conteudo="Alteração de outro autor."),
+                self.advogado_dois,
+                self.sessao,
+            )
+        self.assertEqual(erro.exception.status_code, 403)
+
+        comentarios_router.excluir_comentario(
+            comentario.id_comentario,
+            self.advogado_um,
+            self.sessao,
+        )
+        resposta = comentarios_router.listar_comentarios(
+            10,
+            self.advogado_dois,
+            self.sessao,
+        )
+        self.assertEqual(resposta[0].conteudo, "[Comentário removido]")
+        self.assertIsNotNone(resposta[0].excluido_em)
 
     def test_triage_of_existing_process_shares_its_comments_with_registering_lawyer(self):
         existente = obter(self.sessao, "10")

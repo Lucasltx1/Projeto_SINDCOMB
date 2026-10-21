@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 import os
@@ -16,6 +17,14 @@ from .numero_cnj import normalizar_numero_cnj, numero_cnj_sem_formatacao
 from .schemas import MovimentacaoPublica, ProcessoCandidato
 
 DJEN_API_BASE_URL = "https://comunicaapi.pje.jus.br/api/v1"
+
+
+@dataclass(frozen=True)
+class ResultadoConsultaDJEN:
+    processo: ProcessoCandidato | None
+    publicacoes_consultadas: int
+    paginas_consultadas: int
+    limite_atingido: bool
 
 
 class _ExtratorTextoHTML(HTMLParser):
@@ -105,22 +114,25 @@ def _atraso_base_segundos() -> int:
     return min(max(atraso, 1), 30)
 
 
-async def _consultar(numero_sem_mascara: str) -> dict[str, Any]:
+async def _consultar(
+    cliente: httpx.AsyncClient,
+    numero_sem_mascara: str,
+    pagina: int = 1,
+) -> dict[str, Any]:
     url = f"{DJEN_API_BASE_URL}/comunicacao"
     parametros = {
         "numeroProcesso": numero_sem_mascara,
-        "pagina": "1",
+        "pagina": str(pagina),
         "itensPorPagina": "50",
     }
     tentativas = _limite_tentativas()
     for tentativa in range(1, tentativas + 1):
         try:
-            async with httpx.AsyncClient(timeout=25.0, follow_redirects=False) as cliente:
-                resposta = await cliente.get(
-                    url,
-                    params=parametros,
-                    headers={"Accept": "application/json"},
-                )
+            resposta = await cliente.get(
+                url,
+                params=parametros,
+                headers={"Accept": "application/json"},
+            )
             resposta.raise_for_status()
             payload = resposta.json()
             if not isinstance(payload, dict):
@@ -140,24 +152,48 @@ async def _consultar(numero_sem_mascara: str) -> dict[str, Any]:
     return {"items": []}
 
 
-async def buscar_candidato_por_numero(
+def _limite_paginas() -> int:
+    try:
+        limite = int(os.getenv("SINDCOMB_DJEN_MAX_PAGES", "10"))
+    except ValueError:
+        limite = 10
+    return min(max(limite, 1), 100)
+
+
+async def consultar_por_numero(
     numero: str,
     tribunal_alias: str,
-) -> ProcessoCandidato | None:
-    """Busca publicações públicas do CNJ e seleciona a mais recente do processo."""
+) -> ResultadoConsultaDJEN:
+    """Busca publicações e preserva métricas de paginação mesmo sem resultados."""
     numero_formatado = normalizar_numero_cnj(numero)
     numero_sem_mascara = numero_cnj_sem_formatacao(numero_formatado)
-    payload = await _consultar(numero_sem_mascara)
-    comunicacoes = [
-        item
-        for item in _itens(payload)
-        if _texto(item, "numeroProcesso", "numero_processo")
-        and numero_cnj_sem_formatacao(
-            _texto(item, "numeroProcesso", "numero_processo") or ""
-        ) == numero_sem_mascara
-    ]
+    limite_paginas = _limite_paginas()
+    comunicacoes: list[dict[str, Any]] = []
+    paginas_consultadas = 0
+    pagina_completa = False
+    async with httpx.AsyncClient(timeout=25.0, follow_redirects=False) as cliente:
+        for pagina in range(1, limite_paginas + 1):
+            payload = await _consultar(cliente, numero_sem_mascara, pagina)
+            itens_pagina = _itens(payload)
+            paginas_consultadas = pagina
+            pagina_completa = len(itens_pagina) >= 50
+            comunicacoes.extend(
+                item
+                for item in itens_pagina
+                if _texto(item, "numeroProcesso", "numero_processo")
+                and numero_cnj_sem_formatacao(
+                    _texto(item, "numeroProcesso", "numero_processo") or ""
+                ) == numero_sem_mascara
+            )
+            if not pagina_completa:
+                break
     if not comunicacoes:
-        return None
+        return ResultadoConsultaDJEN(
+            processo=None,
+            publicacoes_consultadas=0,
+            paginas_consultadas=paginas_consultadas,
+            limite_atingido=paginas_consultadas == limite_paginas and pagina_completa,
+        )
 
     comunicacoes.sort(
         key=lambda item: _data(item) or datetime.min.replace(tzinfo=timezone.utc)
@@ -205,7 +241,7 @@ async def buscar_candidato_por_numero(
     classe = _texto(ultima, "nomeClasse", "classe", "classeProcessual")
     assunto = _texto(ultima, "assunto") or "Publicação processual localizada no DJEN"
 
-    return ProcessoCandidato(
+    processo = ProcessoCandidato(
         numero=numero_formatado,
         tribunal=tribunal[:120],
         tribunal_alias=tribunal_alias,
@@ -219,4 +255,23 @@ async def buscar_candidato_por_numero(
             else _url_oficial(ultima, numero_sem_mascara)
         ),
         data_ultima_verificacao_fonte=None,
+        cobertura_consulta={
+            "publicacoes_djen_consultadas": len(comunicacoes),
+            "paginas_djen_consultadas": paginas_consultadas,
+            "limite_djen_atingido": paginas_consultadas == limite_paginas and pagina_completa,
+        },
     )
+    return ResultadoConsultaDJEN(
+        processo=processo,
+        publicacoes_consultadas=len(comunicacoes),
+        paginas_consultadas=paginas_consultadas,
+        limite_atingido=paginas_consultadas == limite_paginas and pagina_completa,
+    )
+
+
+async def buscar_candidato_por_numero(
+    numero: str,
+    tribunal_alias: str,
+) -> ProcessoCandidato | None:
+    """Retorna o processo encontrado, preservando a API simples para callers existentes."""
+    return (await consultar_por_numero(numero, tribunal_alias)).processo

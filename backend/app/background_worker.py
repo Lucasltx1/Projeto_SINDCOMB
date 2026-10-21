@@ -8,6 +8,7 @@ import os
 import time
 
 from app.modulos.processos.email_outbox import processar_email_outbox
+from app.modulos.processos.prazos_service import processar_lembretes_prazo
 from app.modulos.processos.sincronizacao_service import sincronizar_processos
 from app.modulos.processos.worker_locks import lock_distribuido
 from app.nucleo.database import SessionLocal
@@ -51,6 +52,10 @@ async def executar_workers() -> None:
     atraso_inicio = _inteiro_ambiente("SINDCOMB_SYNC_INITIAL_DELAY_SECONDS", 30, 0, 3600)
     intervalo_worker = _inteiro_ambiente("SINDCOMB_WORKER_POLL_SECONDS", 15, 5, 300)
     proxima_sync = time.monotonic() + atraso_inicio
+    proxima_verificacao_prazos = time.monotonic() + atraso_inicio
+    intervalo_lembretes = _inteiro_ambiente(
+        "SINDCOMB_DEADLINE_REMINDER_INTERVAL_SECONDS", 300, 60, 3600
+    )
 
     while True:
         try:
@@ -61,6 +66,18 @@ async def executar_workers() -> None:
             logger.exception("Falha ao processar a fila persistente de e-mails.")
 
         agora = time.monotonic()
+        if agora >= proxima_verificacao_prazos:
+            try:
+                async with lock_distribuido("lembretes-prazo", timeout=300) as adquirido:
+                    if adquirido:
+                        with SessionLocal() as sessao:
+                            quantidade = processar_lembretes_prazo(sessao)
+                        if quantidade:
+                            logger.info("Lembretes de prazo registrados: %s.", quantidade)
+            except Exception:
+                logger.exception("Falha ao processar lembretes de prazo.")
+            proxima_verificacao_prazos = time.monotonic() + intervalo_lembretes
+
         if agora >= proxima_sync:
             if not os.getenv("DATAJUD_API_KEY", "").strip():
                 logger.warning("Sincronização automática suspensa: DATAJUD_API_KEY não configurada.")

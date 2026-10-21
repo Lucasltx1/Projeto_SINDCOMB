@@ -16,6 +16,7 @@ from app.modulos.processos.comentarios_router import router as comentarios_route
 from app.modulos.processos.documentos_router import router as documentos_router
 from app.modulos.processos.peticoes_router import router as peticoes_router
 from app.modulos.processos.prazos_router import router as prazos_router
+from app.modulos.processos.notificacoes_router import router as notificacoes_router
 from app.modulos.processos.router import router as processos_router
 from app.background_worker import executar_workers
 from app.nucleo.database import criar_tabelas, engine
@@ -77,7 +78,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_origens_permitidas,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
 )
 
@@ -125,3 +126,4 @@ app.include_router(processos_router)
 app.include_router(documentos_router)
 app.include_router(peticoes_router)
 app.include_router(prazos_router)
+app.include_router(notificacoes_router)

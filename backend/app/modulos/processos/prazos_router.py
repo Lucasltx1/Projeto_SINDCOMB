@@ -1,19 +1,27 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.nucleo.database import obter_sessao
 from .auth import UsuarioAtual, exigir_acesso_processos, exigir_advogado
-from .models import JuridicoDB, PermissaoProcessoDB, PrazoDB, UsuarioDB
+from .models import (
+    JuridicoDB,
+    PermissaoProcessoDB,
+    PrazoDB,
+    SugestaoPrazoDB,
+    UsuarioDB,
+)
 from .recursos_acesso import obter_processo_autorizado, registrar_auditoria
 from .recursos_schemas import (
     PrazoAtualizacao,
     PrazoCriacao,
     PrazoSaida,
     ResponsavelPrazoSaida,
+    SugestaoPrazoConfirmacao,
+    SugestaoPrazoSaida,
     StatusPrazo,
 )
 
@@ -253,3 +261,144 @@ def excluir_prazo(
         dados={"id_prazo": prazo_id},
     )
     sessao.commit()
+
+
+@router.get(
+    "/api/v1/processos/{processo_id}/sugestoes-prazo",
+    response_model=list[SugestaoPrazoSaida],
+)
+def listar_sugestoes_prazo(
+    processo_id: int,
+    status_sugestao: str | None = Query(default=None, alias="status", pattern="^(pendente|confirmada|descartada)$"),
+    usuario: UsuarioAtual = Depends(exigir_acesso_processos),
+    sessao: Session = Depends(obter_sessao),
+) -> list[SugestaoPrazoDB]:
+    obter_processo_autorizado(sessao, usuario, processo_id)
+    consulta = select(SugestaoPrazoDB).where(SugestaoPrazoDB.id_processo == processo_id)
+    if status_sugestao is not None:
+        consulta = consulta.where(SugestaoPrazoDB.status == status_sugestao)
+    return list(
+        sessao.scalars(
+            consulta.order_by(SugestaoPrazoDB.criado_em.desc(), SugestaoPrazoDB.id_sugestao.desc())
+        ).all()
+    )
+
+
+@router.post(
+    "/api/v1/processos/{processo_id}/sugestoes-prazo/{sugestao_id}/confirmar",
+    response_model=PrazoSaida,
+    status_code=status.HTTP_201_CREATED,
+)
+def confirmar_sugestao_prazo(
+    processo_id: int,
+    sugestao_id: int,
+    entrada: SugestaoPrazoConfirmacao,
+    usuario: UsuarioAtual = Depends(exigir_advogado),
+    sessao: Session = Depends(obter_sessao),
+) -> PrazoSaida:
+    obter_processo_autorizado(sessao, usuario, processo_id, edicao=True)
+    sugestao = sessao.scalar(
+        select(SugestaoPrazoDB).where(
+            SugestaoPrazoDB.id_sugestao == sugestao_id,
+            SugestaoPrazoDB.id_processo == processo_id,
+        )
+    )
+    if sugestao is None:
+        raise HTTPException(status_code=404, detail="Sugestão de prazo não encontrada.")
+    if sugestao.status != "pendente":
+        raise HTTPException(status_code=409, detail="A sugestão já foi revisada.")
+
+    responsavel_id = entrada.id_usuario_responsavel or int(usuario.id)
+    _validar_responsavel(sessao, processo_id, responsavel_id)
+    transicao = sessao.execute(
+        update(SugestaoPrazoDB)
+        .where(
+            SugestaoPrazoDB.id_sugestao == sugestao_id,
+            SugestaoPrazoDB.id_processo == processo_id,
+            SugestaoPrazoDB.status == "pendente",
+        )
+        .values(status="confirmada")
+        .execution_options(synchronize_session=False)
+    )
+    if transicao.rowcount != 1:
+        raise HTTPException(status_code=409, detail="A sugestão já foi revisada.")
+
+    descricao = entrada.descricao
+    if not descricao:
+        descricao = f"Prazo revisado manualmente a partir de publicação: {sugestao.texto_fonte[:4500]}"
+    prazo = PrazoDB(
+        id_processo=processo_id,
+        id_usuario=responsavel_id,
+        descricao=descricao.strip(),
+        data_vencimento=entrada.data_vencimento,
+        status="pendente",
+    )
+    sessao.add(prazo)
+    sessao.flush()
+    sugestao.status = "confirmada"
+    sugestao.revisado_em = datetime.now(timezone.utc)
+    sugestao.revisado_por = int(usuario.id)
+    sugestao.id_prazo = prazo.id_prazo
+    registrar_auditoria(
+        sessao,
+        usuario_id=int(usuario.id),
+        processo_id=processo_id,
+        operacao="sugestao_prazo_confirmada",
+        descricao=f"Sugestão {sugestao_id} confirmada como prazo {prazo.id_prazo}.",
+        dados={
+            "id_sugestao": sugestao_id,
+            "id_prazo": prazo.id_prazo,
+            "data_vencimento": entrada.data_vencimento.isoformat(),
+            "responsavel": responsavel_id,
+        },
+    )
+    sessao.commit()
+    sessao.refresh(prazo)
+    return _saida_prazo(prazo)
+
+
+@router.post(
+    "/api/v1/processos/{processo_id}/sugestoes-prazo/{sugestao_id}/descartar",
+    response_model=SugestaoPrazoSaida,
+)
+def descartar_sugestao_prazo(
+    processo_id: int,
+    sugestao_id: int,
+    usuario: UsuarioAtual = Depends(exigir_advogado),
+    sessao: Session = Depends(obter_sessao),
+) -> SugestaoPrazoDB:
+    obter_processo_autorizado(sessao, usuario, processo_id, edicao=True)
+    sugestao = sessao.scalar(
+        select(SugestaoPrazoDB).where(
+            SugestaoPrazoDB.id_sugestao == sugestao_id,
+            SugestaoPrazoDB.id_processo == processo_id,
+        )
+    )
+    if sugestao is None:
+        raise HTTPException(status_code=404, detail="Sugestão de prazo não encontrada.")
+    transicao = sessao.execute(
+        update(SugestaoPrazoDB)
+        .where(
+            SugestaoPrazoDB.id_sugestao == sugestao_id,
+            SugestaoPrazoDB.id_processo == processo_id,
+            SugestaoPrazoDB.status == "pendente",
+        )
+        .values(status="descartada")
+        .execution_options(synchronize_session=False)
+    )
+    if transicao.rowcount != 1:
+        raise HTTPException(status_code=409, detail="A sugestão já foi revisada.")
+    sugestao.status = "descartada"
+    sugestao.revisado_em = datetime.now(timezone.utc)
+    sugestao.revisado_por = int(usuario.id)
+    registrar_auditoria(
+        sessao,
+        usuario_id=int(usuario.id),
+        processo_id=processo_id,
+        operacao="sugestao_prazo_descartada",
+        descricao=f"Sugestão de prazo {sugestao_id} descartada.",
+        dados={"id_sugestao": sugestao_id},
+    )
+    sessao.commit()
+    sessao.refresh(sugestao)
+    return sugestao

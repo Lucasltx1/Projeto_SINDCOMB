@@ -36,6 +36,10 @@ _EXTENSOES_POSTGRES = (
     "ALTER TABLE public.processo ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()",
     "ALTER TABLE public.linha_tempo ADD COLUMN IF NOT EXISTS dados_json JSON NOT NULL DEFAULT '{}'::json",
     "ALTER TABLE public.auditoria ADD COLUMN IF NOT EXISTS dados_json JSON NOT NULL DEFAULT '{}'::json",
+    "ALTER TABLE public.comentario_processo ADD COLUMN IF NOT EXISTS editado_em TIMESTAMPTZ",
+    "ALTER TABLE public.comentario_processo ADD COLUMN IF NOT EXISTS excluido_em TIMESTAMPTZ",
+    "ALTER TABLE public.prazo_lembrete DROP CONSTRAINT IF EXISTS prazo_lembrete_idempotente_key",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_prazo_lembrete_destinatario ON public.prazo_lembrete (id_prazo, tipo, data_referencia, id_usuario)",
     # Preserva o histórico jurídico, removendo apenas a referência de autoria
     # quando um advogado é excluído pelo administrador.
     "ALTER TABLE public.peticao ALTER COLUMN id_usuario DROP NOT NULL",
@@ -44,6 +48,7 @@ _EXTENSOES_POSTGRES = (
     "ALTER TABLE public.peticao ADD CONSTRAINT peticao_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuario(id_usuario) ON DELETE SET NULL",
     "ALTER TABLE public.prazo DROP CONSTRAINT IF EXISTS prazo_id_usuario_fkey",
     "ALTER TABLE public.prazo ADD CONSTRAINT prazo_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuario(id_usuario) ON DELETE SET NULL",
+    "CREATE INDEX IF NOT EXISTS ix_prazo_status_vencimento_id ON public.prazo (status, data_vencimento, id_prazo)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_usuario_email_lower ON public.usuario (lower(email))",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_usuario_username_lower ON public.usuario (lower(username)) WHERE username IS NOT NULL",
 )

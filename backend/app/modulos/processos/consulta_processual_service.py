@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -10,7 +10,7 @@ import httpx
 
 from .datajud_service import buscar_por_numero as buscar_datajud
 from .datajud_service import extrair_candidato_datajud
-from .djen_service import buscar_candidato_por_numero as buscar_djen
+from .djen_service import consultar_por_numero as consultar_djen
 from .numero_cnj import numero_cnj_sem_formatacao
 from .schemas import MovimentacaoPublica, ProcessoCandidato
 
@@ -24,6 +24,7 @@ class ConsultaProcessual:
     fontes_consultadas: tuple[FonteProcessual, ...]
     consultado_em: datetime
     falhas_fontes: tuple[str, ...] = ()
+    cobertura_consulta: dict[str, int | bool] = field(default_factory=dict)
 
 
 async def consultar_por_numero(numero: str, tribunal_alias: str) -> ConsultaProcessual:
@@ -36,6 +37,10 @@ async def consultar_por_numero(numero: str, tribunal_alias: str) -> ConsultaProc
     O DJEN fornece publicações/comunicações, não o inteiro teor dos autos.
     """
     datajud_itens = await buscar_datajud(numero, tribunal_alias)
+    cobertura_datajud: dict[str, int | bool] = {
+        "resultados_datajud_consultados": len(datajud_itens),
+        "limite_datajud_resultados_atingido": len(datajud_itens) >= 10,
+    }
     numero_alvo = numero_cnj_sem_formatacao(numero)
     item_datajud = next(
         (
@@ -52,14 +57,21 @@ async def consultar_por_numero(numero: str, tribunal_alias: str) -> ConsultaProc
         if item_datajud is not None
         else None
     )
+    consulta_djen = None
     try:
-        processo_djen = await buscar_djen(numero, tribunal_alias)
+        consulta_djen = await consultar_djen(numero, tribunal_alias)
+        processo_djen = consulta_djen.processo
     except (httpx.HTTPError, ValueError) as erro:
         if processo_datajud is None:
             raise
         agora = datetime.now(timezone.utc)
+        cobertura = {**cobertura_datajud, **processo_datajud.cobertura_consulta}
         processo = processo_datajud.model_copy(
-            update={"origem_dados": "datajud", "consultado_em": agora}
+            update={
+                "origem_dados": "datajud",
+                "consultado_em": agora,
+                "cobertura_consulta": cobertura,
+            }
         )
         return ConsultaProcessual(
             processo=processo,
@@ -67,25 +79,52 @@ async def consultar_por_numero(numero: str, tribunal_alias: str) -> ConsultaProc
             fontes_consultadas=("datajud", "djen"),
             consultado_em=agora,
             falhas_fontes=(f"djen:{type(erro).__name__}",),
+            cobertura_consulta=cobertura,
         )
 
     agora = datetime.now(timezone.utc)
+    cobertura_djen: dict[str, int | bool] = (
+        {
+            "publicacoes_djen_consultadas": consulta_djen.publicacoes_consultadas,
+            "paginas_djen_consultadas": consulta_djen.paginas_consultadas,
+            "limite_djen_atingido": consulta_djen.limite_atingido,
+        }
+        if consulta_djen is not None
+        else {}
+    )
     if processo_datajud is None and processo_djen is None:
         return ConsultaProcessual(
             processo=None,
             fonte=None,
             fontes_consultadas=("datajud", "djen"),
             consultado_em=agora,
+            cobertura_consulta={**cobertura_datajud, **cobertura_djen},
         )
 
     if processo_datajud is None:
         processo = processo_djen.model_copy(
-            update={"origem_dados": "djen", "consultado_em": agora}
+            update={
+                "origem_dados": "djen",
+                "consultado_em": agora,
+                "cobertura_consulta": {
+                    **cobertura_datajud,
+                    **cobertura_djen,
+                    **processo_djen.cobertura_consulta,
+                },
+            }
         )
         fonte: FonteProcessual = "djen"
     elif processo_djen is None:
         processo = processo_datajud.model_copy(
-            update={"origem_dados": "datajud", "consultado_em": agora}
+            update={
+                "origem_dados": "datajud",
+                "consultado_em": agora,
+                "cobertura_consulta": {
+                    **cobertura_datajud,
+                    **cobertura_djen,
+                    **processo_datajud.cobertura_consulta,
+                },
+            }
         )
         fonte = "datajud"
     else:
@@ -110,6 +149,12 @@ async def consultar_por_numero(numero: str, tribunal_alias: str) -> ConsultaProc
                 "origem_dados": "datajud",
                 "consultado_em": agora,
                 "movimentacoes_publicas": movimentacoes,
+                "cobertura_consulta": {
+                    **cobertura_datajud,
+                    **cobertura_djen,
+                    **processo_datajud.cobertura_consulta,
+                    **(processo_djen.cobertura_consulta if processo_djen else {}),
+                },
                 "ultima_movimentacao": (
                     processo_djen.ultima_movimentacao
                     if mais_recente and mais_recente.fonte_dados == "djen"
@@ -135,4 +180,5 @@ async def consultar_por_numero(numero: str, tribunal_alias: str) -> ConsultaProc
         fonte=fonte,
         fontes_consultadas=("datajud", "djen"),
         consultado_em=agora,
+        cobertura_consulta=processo.cobertura_consulta,
     )

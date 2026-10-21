@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+import hashlib
 import logging
+import os
 import re
 import unicodedata
 
@@ -13,9 +17,10 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .consulta_processual_service import consultar_por_numero
+from .consulta_processual_service import ConsultaProcessual, consultar_por_numero
 from .email_outbox import enfileirar_notificacao_processo
 from .models import PermissaoProcessoDB, RegistroSincronizacao
+from .notificacoes_service import notificar_usuarios_do_processo
 from .numero_cnj import alias_datajud_por_numero
 from .repository import listar, salvar
 from .schemas import (
@@ -25,6 +30,7 @@ from .schemas import (
     ResultadoTriagem,
 )
 from .status_service import classificar_interesse, interpretar_movimentacao_publica
+from .sugestoes_prazo_service import sugerir_prazos_de_movimentacoes
 
 logger = logging.getLogger(__name__)
 _PREFIXO_DATA_DJEN = re.compile(r"^disponibilizada em .+? — ", re.IGNORECASE)
@@ -54,8 +60,6 @@ async def sincronizar_processos(
     usuario_id: int | None = None,
 ) -> ResultadoSincronizacao:
     """Consulta processos; chamadas de advogado são limitadas aos seus processos editáveis."""
-    import os
-
     if not os.getenv("DATAJUD_API_KEY", "").strip():
         raise RuntimeError("Configure DATAJUD_API_KEY para consultar o DataJud.")
 
@@ -71,23 +75,54 @@ async def sincronizar_processos(
         )
         processos = [processo for processo in processos if int(processo.id) in ids_autorizados]
 
+    try:
+        limite_concorrencia = int(os.getenv("SINDCOMB_SYNC_MAX_CONCURRENCY", "3"))
+    except ValueError:
+        limite_concorrencia = 3
+    limite_concorrencia = min(max(limite_concorrencia, 1), 5)
+    semaforo = asyncio.Semaphore(limite_concorrencia)
+
+    async def consultar_limitado(
+        processo: ProcessoRegistro,
+    ) -> tuple[str, ConsultaProcessual | None, Exception | None]:
+        alias = (processo.dados.tribunal_alias or "").strip().lower()
+        try:
+            if not alias:
+                alias = alias_datajud_por_numero(processo.dados.numero)
+            async with semaforo:
+                consulta = await consultar_por_numero(processo.dados.numero, alias)
+            return alias, consulta, None
+        except Exception as erro:
+            return alias, None, erro
+
+    async def iterar_consultas() -> AsyncIterator[
+        tuple[ProcessoRegistro, tuple[str, ConsultaProcessual | None, Exception | None]]
+    ]:
+        for inicio in range(0, len(processos), limite_concorrencia):
+            lote = processos[inicio : inicio + limite_concorrencia]
+            consultas = await asyncio.gather(
+                *(consultar_limitado(processo) for processo in lote)
+            )
+            for processo, resultado in zip(lote, consultas):
+                yield processo, resultado
+
     consultados = 0
     movimentos_novos = 0
     falhas: list[str] = []
-    for processo in processos:
-        alias = (processo.dados.tribunal_alias or "").strip().lower()
+    async for processo, (alias, consulta, erro_consulta) in iterar_consultas():
         erro_texto: str | None = None
         atualizacoes = 0
         encontrado = False
         fonte_encontrada: str | None = None
+        eventos_novos_disponiveis = 0
         fontes_consultadas: tuple[str, ...] = ("datajud",)
         falhas_fontes: tuple[str, ...] = ()
         consultados += 1
 
         try:
-            if not alias:
-                alias = alias_datajud_por_numero(processo.dados.numero)
-            consulta = await consultar_por_numero(processo.dados.numero, alias)
+            if erro_consulta is not None:
+                raise erro_consulta
+            assert consulta is not None
             fontes_consultadas = consulta.fontes_consultadas
             falhas_fontes = consulta.falhas_fontes
             candidato = consulta.processo
@@ -101,6 +136,7 @@ async def sincronizar_processos(
                     "consultado_em": consulta.consultado_em,
                     "data_ultima_verificacao_fonte": candidato.data_ultima_verificacao_fonte,
                     "fonte_url": candidato.fonte_url,
+                    "cobertura_consulta": consulta.cobertura_consulta or candidato.cobertura_consulta,
                 }
                 if candidato.tribunal:
                     dados_update["tribunal"] = candidato.tribunal
@@ -118,6 +154,11 @@ async def sincronizar_processos(
                             fonte_dados=consulta.fonte,
                         )
                     )
+                sugerir_prazos_de_movimentacoes(
+                    sessao,
+                    int(processo.id),
+                    eventos_publicos,
+                )
 
                 chaves_existentes = {
                     _chave_movimentacao(
@@ -144,6 +185,7 @@ async def sincronizar_processos(
                         continue
                     novos_por_chave.setdefault(chave, evento)
 
+                eventos_novos_disponiveis = len(novos_por_chave)
                 eventos_recentes = sorted(
                     novos_por_chave.values(),
                     key=lambda evento: evento.data_fonte or datetime.min.replace(tzinfo=timezone.utc),
@@ -192,6 +234,21 @@ async def sincronizar_processos(
                         "Novas movimentações processuais",
                         resumo_notificacao,
                     )
+                    chave_eventos = hashlib.sha256(
+                        "\n".join(
+                            f"{evento.data_fonte.isoformat() if evento.data_fonte else ''}:"
+                            f"{evento.fonte_dados or ''}:{_normalizar_texto_movimentacao(evento.texto)}"
+                            for evento in eventos_recentes
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    notificar_usuarios_do_processo(
+                        sessao,
+                        int(processo.id),
+                        categoria="movimentacao_processual",
+                        titulo="Nova movimentação processual",
+                        mensagem=resumo_notificacao[:10000],
+                        chave=f"movimentacoes:{chave_eventos}",
+                    )
                     movimentos_novos += 1
                     atualizacoes = len(novos_movimentos)
                 sessao.commit()
@@ -230,6 +287,8 @@ async def sincronizar_processos(
                     f"encontrado={encontrado}; fonte={fonte_encontrada or 'nenhuma'}; "
                     f"fontes_consultadas={','.join(fontes_consultadas)}; "
                     f"fontes_com_falha={','.join(falhas_fontes) or 'nenhuma'}; "
+                    f"cobertura={consulta.cobertura_consulta if encontrado and consulta else {}}; "
+                    f"eventos_novos_disponiveis={eventos_novos_disponiveis}; "
                     f"erro={erro_texto or 'nenhum'}"
                 ),
                 quantidade_atualizacoes=atualizacoes,

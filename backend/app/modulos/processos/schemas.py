@@ -41,6 +41,7 @@ class ProcessoCandidato(BaseModel):
     origem_dados: Literal["datajud", "djen"] | None = None
     consultado_em: datetime | None = None
     data_ultima_verificacao_fonte: datetime | None = None
+    cobertura_consulta: dict[str, int | bool] = Field(default_factory=dict)
 
     @field_validator("numero")
     @classmethod

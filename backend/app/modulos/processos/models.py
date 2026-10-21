@@ -156,6 +156,8 @@ class ComentarioProcessoDB(Base):
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
+    editado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    excluido_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class LinhaTempoDB(Base):
@@ -336,6 +338,100 @@ class VersaoPeticaoDB(Base):
     )
 
 
+class PeticaoRevisorDB(Base):
+    __tablename__ = "peticao_revisor"
+
+    id_peticao: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("peticao.id_peticao", ondelete="CASCADE"), primary_key=True
+    )
+    id_usuario: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="CASCADE"), index=True
+    )
+    atribuido_por: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    atribuido_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class PeticaoComentarioDB(Base):
+    __tablename__ = "peticao_comentario"
+    __table_args__ = (Index("ix_peticao_comentario_versao_data", "id_versao", "criado_em"),)
+
+    id_comentario: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_peticao: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("peticao.id_peticao", ondelete="CASCADE"), index=True
+    )
+    id_versao: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("versao_peticao.id_versao", ondelete="CASCADE"), index=True
+    )
+    id_usuario: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    conteudo: Mapped[str] = mapped_column(Text)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    editado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolvido_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolvido_por: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    excluido_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PeticaoProtocoloDB(Base):
+    __tablename__ = "peticao_protocolo"
+
+    id_protocolo: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_peticao: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("peticao.id_peticao", ondelete="CASCADE"), index=True
+    )
+    id_usuario: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    id_documento_comprovante: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("documento.id_documento", ondelete="SET NULL"), nullable=True
+    )
+    numero_protocolo: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    tribunal: Mapped[str] = mapped_column(String(120))
+    protocolado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    observacao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    registrado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class SugestaoPrazoDB(Base):
+    __tablename__ = "sugestao_prazo"
+    __table_args__ = (
+        UniqueConstraint("id_processo", "chave_evento", name="sugestao_prazo_evento_key"),
+        Index("ix_sugestao_prazo_process_status", "id_processo", "status"),
+    )
+
+    id_sugestao: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_processo: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("processo.id_processo", ondelete="CASCADE"), index=True
+    )
+    chave_evento: Mapped[str] = mapped_column(String(64))
+    texto_fonte: Mapped[str] = mapped_column(Text)
+    data_publicacao: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fonte: Mapped[str] = mapped_column(String(30))
+    fonte_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pendente", index=True)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    revisado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revisado_por: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    id_prazo: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("prazo.id_prazo", ondelete="SET NULL"), nullable=True
+    )
+
+
 class ModeloPeticaoDB(Base):
     """Modelo reutilizável com variáveis no formato {{nome_da_variavel}}."""
 
@@ -359,6 +455,9 @@ class PrazoDB(Base):
     """Prazo vinculado a processo e advogado responsável."""
 
     __tablename__ = "prazo"
+    __table_args__ = (
+        Index("ix_prazo_status_vencimento_id", "status", "data_vencimento", "id_prazo"),
+    )
 
     id_prazo: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     id_processo: Mapped[int] = mapped_column(
@@ -371,6 +470,57 @@ class PrazoDB(Base):
     data_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
     data_vencimento: Mapped[date] = mapped_column(Date, index=True)
     status: Mapped[str] = mapped_column(String(30), default="pendente", index=True)
+
+
+class PrazoLembreteDB(Base):
+    __tablename__ = "prazo_lembrete"
+    __table_args__ = (
+        Index(
+            "uq_prazo_lembrete_destinatario",
+            "id_prazo",
+            "tipo",
+            "data_referencia",
+            "id_usuario",
+            unique=True,
+        ),
+    )
+
+    id_lembrete: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_prazo: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("prazo.id_prazo", ondelete="CASCADE"), index=True
+    )
+    id_usuario: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    tipo: Mapped[str] = mapped_column(String(30))
+    data_referencia: Mapped[date] = mapped_column(Date)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class NotificacaoInternaDB(Base):
+    __tablename__ = "notificacao_interna"
+    __table_args__ = (
+        UniqueConstraint("id_usuario", "chave_deduplicacao", name="notificacao_interna_dedupe_key"),
+        Index("ix_notificacao_interna_usuario_leitura", "id_usuario", "lida_em", "criado_em"),
+    )
+
+    id_notificacao: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_usuario: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="CASCADE"), index=True
+    )
+    id_processo: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("processo.id_processo", ondelete="CASCADE"), nullable=True, index=True
+    )
+    categoria: Mapped[str] = mapped_column(String(50))
+    titulo: Mapped[str] = mapped_column(String(200))
+    mensagem: Mapped[str] = mapped_column(Text)
+    chave_deduplicacao: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+    lida_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class NotificacaoDB(Base):

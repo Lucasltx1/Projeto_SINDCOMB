@@ -16,12 +16,16 @@ from .models import (
     LinhaTempoDB,
     ModeloPeticaoDB,
     NotificacaoDB,
+    NotificacaoInternaDB,
     PermissaoProcessoDB,
+    PeticaoComentarioDB,
     PeticaoDB,
+    PeticaoProtocoloDB,
     PrazoDB,
     ProcessoAssociadoDB,
     ProcessoDB,
     RegistroSincronizacao,
+    SugestaoPrazoDB,
     UsuarioDB,
     UsuarioNotificacaoDB,
     VersaoPeticaoDB,
@@ -224,6 +228,19 @@ def limpar_referencias_pessoa(
                 processos_com_referencia.add(prazo.id_processo)
             registros_alterados += 1
 
+    notificacoes_internas = sessao.scalars(select(NotificacaoInternaDB)).all()
+    for notificacao in notificacoes_internas:
+        mudou = False
+        for campo in ("titulo", "mensagem"):
+            valor, alterado = _sanitizar_valor(getattr(notificacao, campo), termos)
+            if alterado:
+                setattr(notificacao, campo, valor)
+                mudou = True
+        if mudou:
+            if notificacao.id_processo is not None:
+                processos_com_referencia.add(notificacao.id_processo)
+            registros_alterados += 1
+
     if id_usuario is not None:
         sessao.execute(
             delete(UsuarioNotificacaoDB).where(UsuarioNotificacaoDB.id_usuario == id_usuario)
@@ -241,6 +258,9 @@ def limpar_referencias_pessoa(
         (VersaoPeticaoDB, ("conteudo",), "id_usuario"),
         (ModeloPeticaoDB, ("nome", "tipo", "conteudo"), "criado_por"),
         (PrazoDB, ("descricao",), "id_usuario"),
+        (PeticaoComentarioDB, ("conteudo",), "id_usuario"),
+        (PeticaoProtocoloDB, ("numero_protocolo", "tribunal", "observacao"), "id_usuario"),
+        (SugestaoPrazoDB, ("texto_fonte",), "revisado_por"),
     )
     for modelo, campos, campo_usuario in registros_textuais:
         for registro in sessao.scalars(select(modelo)).all():
@@ -264,6 +284,13 @@ def limpar_referencias_pessoa(
                 if processo_id is None and isinstance(registro, VersaoPeticaoDB):
                     peticao = sessao.get(PeticaoDB, registro.id_peticao)
                     processo_id = peticao.id_processo if peticao is not None else None
+                if processo_id is None and isinstance(
+                    registro, (PeticaoComentarioDB, PeticaoProtocoloDB)
+                ):
+                    peticao = sessao.get(PeticaoDB, registro.id_peticao)
+                    processo_id = peticao.id_processo if peticao is not None else None
+                if processo_id is None and isinstance(registro, SugestaoPrazoDB):
+                    processo_id = registro.id_processo
                 if processo_id is not None:
                     processos_com_referencia.add(processo_id)
 

@@ -8,8 +8,8 @@
 - Somente advogados cadastrados na tabela `juridico` podem cadastrar processos ou iniciar sincronizações. Listas, detalhes, documentos, petições, prazos e históricos verificam a permissão individual no processo. Para movimentar, alterar status ou arquivar, advogados precisam de permissão de edição naquele processo. Visualizadores autorizados podem consultar, mas não alterar.
 - O encerramento processual e o arquivamento são operações distintas. Apenas advogado com permissão de edição arquiva/desarquiva; arquivados saem da lista ativa e da sincronização automática, mas continuam consultáveis e com histórico preservado.
 - Associados não têm conta de usuário. O cadastro de associados é consultado para vincular partes a processos e descobrir endereços de e-mail.
-- A exclusão de um advogado ou associado é permanente e exclusiva para administradores. O sistema anonimiza referências textuais em processos, prazos, petições, versões, modelos, auditorias, sincronizações e mensagens da fila; mensagens pendentes endereçadas à pessoa são canceladas. Arquivos anexados não são reescritos automaticamente e precisam ser revisados segundo a política de retenção do projeto.
-- Atualizações e notificações não são mantidas numa caixa de entrada do sistema. A outbox cifra corpos pendentes com Fernet e apaga assunto/corpo após envio, cancelamento ou falha permanente. Preserve `SINDCOMB_EMAIL_ENCRYPTION_KEY` enquanto houver mensagens pendentes; trocá-la torna esses corpos irrecuperáveis.
+- A exclusão de um advogado ou associado é permanente e exclusiva para administradores. O sistema anonimiza referências textuais em processos, prazos, petições, versões, modelos, comentários, notificações, auditorias, sincronizações e mensagens da fila; mensagens pendentes endereçadas à pessoa são canceladas. Arquivos anexados não são reescritos automaticamente e precisam ser revisados segundo a política de retenção do projeto.
+- Notificações processuais e lembretes ficam também numa caixa interna por usuário. A outbox de e-mail cifra corpos pendentes com Fernet e apaga assunto/corpo após envio, cancelamento ou falha permanente. Preserve `SINDCOMB_EMAIL_ENCRYPTION_KEY` enquanto houver mensagens pendentes; trocá-la torna esses corpos irrecuperáveis.
 
 ## Configuração
 
@@ -21,7 +21,8 @@ Copie `.env.example` para `.env` e substitua todos os valores `CHANGE-ME`. Gere 
 5. `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` e `SMTP_STARTTLS` para confirmação de e-mail e avisos. E-mails pendentes são repetidos com intervalo exponencial até `SINDCOMB_EMAIL_MAX_ATTEMPTS` (padrão 8).
 6. `SINDCOMB_PUBLIC_API_URL` e `SINDCOMB_PUBLIC_APP_URL` para os links de confirmação e recuperação.
 7. `DATAJUD_API_KEY` para consulta pública do CNJ. O backend consulta também a API pública do DJEN/CNJ, que não exige credencial comercial.
-8. `SINDCOMB_SYNC_INTERVAL_MINUTES` e `SINDCOMB_SYNC_FAILURE_RETRY_MINUTES` controlam os ciclos automáticos.
+8. `SINDCOMB_SYNC_INTERVAL_MINUTES` e `SINDCOMB_SYNC_FAILURE_RETRY_MINUTES` controlam os ciclos automáticos; `SINDCOMB_SYNC_MAX_CONCURRENCY` define consultas externas simultâneas por ciclo (padrão 3, limitado a 1–5). As consultas ocorrem em lotes limitados e as gravações no banco permanecem sequenciais.
+9. `SINDCOMB_DJEN_MAX_PAGES` limita a paginação do DJEN (padrão 10, máximo 100 páginas de 50 itens); `SINDCOMB_DEADLINE_REMINDER_INTERVAL_SECONDS` controla a frequência da varredura de prazos (padrão 300 segundos), e `SINDCOMB_TIMEZONE` define o fuso horário dos lembretes (padrão `America/Sao_Paulo`).
 
 As rotas de login, verificação, recuperação de senha e interpretação por IA usam limites distribuídos pelo Redis. Se o Redis estiver indisponível, essas rotas respondem `503` em vez de ignorar o controle. Configure também limites no proxy reverso e encaminhe endereços de cliente somente de proxies confiáveis.
 
@@ -38,6 +39,18 @@ O dump habilita RLS, mas não define políticas PostgreSQL. O backend usa uma co
 3. Advogados recém-cadastrados confirmam o e-mail e usam “Esqueci minha senha” para definir uma senha pessoal. Contas legadas com `alterar_senha_no_primeiro_acesso=true` devem usar `POST /api/v1/auth/alterar-senha`, enviando `senha_atual` e `nova_senha` (mínimo 12 caracteres). Para administradores, essa rota responde `403` e a senha não é alterada.
 4. A API grava o JWT em cookie `HttpOnly`, `SameSite=Strict` e `Secure` em produção. A interface recebe apenas um token CSRF e o envia em `X-CSRF-Token` para operações que alteram dados. Use frontend e API sob o mesmo site HTTPS.
 
+## Pendências para a interface do software
+
+O backend disponibiliza as operações abaixo, mas a interface web ainda não está integrada a todas elas. Até que essas telas sejam implementadas, as operações administrativas podem ser testadas pelo Swagger em `/docs` (em desenvolvimento); isso não substitui uma interface pronta para uso diário.
+
+- **Painel administrativo:** criar navegação após o login baseada no perfil `administrador` e telas para listar, cadastrar, editar, ativar/desativar e excluir advogados; reenviar confirmação de e-mail; e listar, cadastrar, editar e excluir associados. A API também oferece consulta de auditoria administrativa. Hoje o login só confirma o perfil e oferece o acesso à área de processos, que é bloqueada para administradores por regra de autorização.
+- **Prazos:** conectar a página de calendário à API. Atualmente ela exibe dados de exemplo fixos; não lista prazos reais nem permite criar, editar, concluir ou cancelar prazos. Integrar também a visualização e revisão das sugestões de prazo e a indicação de responsável.
+- **Colaboração e notificações:** criar telas para comentários compartilhados do processo, caixa de notificações, histórico de sincronização e revisão de petições (atribuição de revisor, comentários por versão e registro manual de protocolo). Essas operações têm endpoints no backend, mas não estão expostas na interface atual.
+- **Fluxos do advogado:** completar a interface de cadastro/triagem de processos, gestão de documentos e petições, comentários, prazos e alterações de status, ligando formulários e ações aos endpoints existentes e respeitando as permissões de edição e visualização.
+- **Validação ponta a ponta:** testar os fluxos de cada perfil no navegador, incluindo sessão/cookie, token CSRF, estados de carregamento, erros, confirmação de e-mail e notificações. Usar dados reais da API e remover os dados fictícios das telas antes da disponibilização.
+
+O que já existe na interface é parcial: login, lista de processos ativos/arquivados com sincronização manual para advogados e visualização de detalhes/movimentações. A implementação dessas pendências deve ser coordenada com o responsável pelo frontend; até lá, a disponibilidade de um endpoint não significa que a função esteja acessível no site.
+
 ## Endpoints
 
 - `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `GET /api/v1/auth/csrf`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/verificar-email?token=...`, `POST /api/v1/auth/verificar-email`, `POST /api/v1/auth/alterar-senha`, `POST /api/v1/auth/solicitar-recuperacao-senha` e `POST /api/v1/auth/redefinir-senha`.
@@ -45,8 +58,10 @@ O dump habilita RLS, mas não define políticas PostgreSQL. O backend usa uma co
 - `GET/POST /api/v1/admin/associados`; `PATCH /api/v1/admin/associados/{associado_id}`; `DELETE /api/v1/admin/associados/{associado_id}`. Associados são somente contatos/partes, não usuários.
 - `POST /api/v1/processos/triagem` — advogado informa o número CNJ; o backend consulta o DataJud e as publicações do DJEN/CNJ, combinando os metadados encontrados antes da triagem contextual. A resposta é genérica para não revelar se aquele processo já é acompanhado no sistema; consulte a lista de processos para verificar seu acesso.
 - `POST /api/v1/processos/sincronizar` — advogado sincroniza os processos em que tem permissão de edição pelas fontes configuradas; movimentação nova passa pelo agente e entra na fila de e-mails.
-- `GET/POST /api/v1/processos/{id}/comentarios` — lista ou adiciona comentários internos compartilhados entre os advogados que têm acesso ao processo. A criação exige permissão de edição; a listagem exige acesso ao processo.
-- `GET /api/v1/processos/{id}/sincronizacoes` — consulta o histórico recente de tentativas e resultados daquele processo.
+- `GET/POST /api/v1/processos/{id}/comentarios` — lista ou adiciona comentários internos compartilhados entre os advogados que têm acesso ao processo. `PATCH/DELETE /api/v1/processos/comentarios/{comentario_id}` permite ao autor editar ou remover o próprio comentário; remoções são exibidas como tombstone e todas as operações registram auditoria.
+- `GET /api/v1/processos/{id}/sugestoes-prazo?status=pendente` — lista publicações que contêm indícios textuais de possível prazo. `POST /api/v1/processos/{id}/sugestoes-prazo/{sugestao_id}/confirmar` exige que o advogado informe a data de vencimento e o responsável; `.../descartar` registra a revisão. O sistema não calcula prazo legal nem transforma a sugestão em prazo sem confirmação humana.
+- `GET /api/v1/notificacoes?somente_nao_lidas=true&limite=50&deslocamento=0` consulta a caixa interna e a contagem de não lidas; `PATCH /api/v1/notificacoes/{id}/ler` marca uma notificação como lida; `POST /api/v1/notificacoes/ler-todas` marca todas as visíveis como lidas.
+- `GET /api/v1/processos/{id}/sincronizacoes` — consulta o histórico recente de tentativas e resultados daquele processo, incluindo cobertura, páginas e eventuais limites ou falhas de fonte.
 - `GET /api/v1/processos?arquivado=false` e `GET /api/v1/processos?arquivado=true` — lista ativa e arquivo, respectivamente; o padrão é `false`.
 - `GET /api/v1/processos/{id}` — consulta um processo.
 - `POST /api/v1/processos/{id}/arquivar` e `POST /api/v1/processos/{id}/desarquivar` — arquiva processo encerrado ou reativa seu acompanhamento. As ações exigem advogado com permissão de edição e deixam registro na auditoria do processo.
@@ -89,13 +104,16 @@ Os recursos do processo usam a permissão gravada em `permissao_processo`. Admin
 - `GET/POST /api/v1/processos/{processo_id}/peticoes` lista ou cria uma petição.
 - `GET/PATCH /api/v1/peticoes/{peticao_id}` consulta ou edita o rascunho.
 - `GET /api/v1/peticoes/{peticao_id}/versoes` consulta os snapshots imutáveis de conteúdo.
-- `POST /api/v1/peticoes/{peticao_id}/status` aplica as transições de revisão, aprovação, rejeição e protocolo.
+- `POST /api/v1/peticoes/{peticao_id}/status` aplica as transições de revisão, aprovação e rejeição.
+- `GET/PUT/DELETE /api/v1/peticoes/{peticao_id}/revisor` consulta, atribui ou remove o advogado revisor. O revisor precisa ser advogado ativo com permissão de edição no processo.
+- `GET/POST /api/v1/peticoes/{peticao_id}/comentarios` lista ou adiciona observações colaborativas vinculadas a uma versão imutável. `PATCH/DELETE /api/v1/peticoes/comentarios/{comentario_id}` permite ao autor editar/remover; `PATCH /api/v1/peticoes/comentarios/{comentario_id}/resolucao` registra resolução ou reabertura.
+- `GET/POST /api/v1/peticoes/{peticao_id}/protocolos` consulta ou registra manualmente um protocolo. O registro exige data com fuso horário, tribunal e número de protocolo ou documento comprovante do mesmo processo; a operação muda o status para `protocolada`. Esse endpoint não protocola no PJe nem confirma dados junto ao tribunal.
 - `GET /api/v1/peticoes/{peticao_id}/exportar?formato=docx` ou `formato=pdf` gera arquivo para download.
 - Modelos são gerenciados em `GET/POST /api/v1/peticoes/modelos`, `PATCH/DELETE /api/v1/peticoes/modelos/{modelo_id}`. Variáveis aceitas incluem `{{processo_numero}}`, `{{processo_tribunal}}`, `{{processo_classe}}`, `{{processo_assunto}}`, `{{associado_nome}}`, `{{advogado_nome}}`, `{{advogado_oab}}`, `{{vara}}` e `{{comarca}}`. Variáveis sem informação correspondente permanecem como marcadores para revisão humana.
-- Cada edição de conteúdo diferente cria uma nova versão. A aprovação exige que a petição esteja em revisão; petições aprovadas só podem avançar para protocoladas.
+- Cada edição de conteúdo diferente cria uma nova versão. A aprovação exige que a petição esteja em revisão. O status `protocolada` só é atribuído pelo registro manual de protocolo, para manter evidência associada.
 - Quando um advogado é excluído, autoria de petições, versões e prazos fica sem vínculo de usuário, preservando o histórico jurídico sem manter a identidade no cadastro.
 
-As tabelas existentes `peticao` e `documento` são mapeadas pelos modelos ORM. `versao_peticao` e `modelo_peticao` são tabelas auxiliares criadas pelo bootstrap do SQLAlchemy nos bancos existentes.
+As tabelas existentes `peticao` e `documento` são mapeadas pelos modelos ORM. `versao_peticao`, `modelo_peticao`, `peticao_revisor`, `peticao_comentario`, `peticao_protocolo`, `notificacao_interna`, `prazo_lembrete` e `sugestao_prazo` são tabelas auxiliares criadas pelo bootstrap do SQLAlchemy nos bancos existentes. O bootstrap também adiciona os campos de edição/remoção à tabela de comentários processuais.
 
 ### Prazos
 
@@ -104,7 +122,14 @@ As tabelas existentes `peticao` e `documento` são mapeadas pelos modelos ORM. `
 - `GET /api/v1/processos/{processo_id}/prazos/responsaveis` lista advogados ativos com permissão de edição no processo, para selecionar o responsável.
 - `PATCH/DELETE /api/v1/prazos/{prazo_id}` atualiza ou exclui o prazo, registrando auditoria.
 - O responsável precisa ser advogado ativo com permissão de edição naquele processo. Se o cadastro do advogado for excluído, o prazo permanece sem vínculo de responsável até ser reatribuído. A resposta informa `atrasado` e `dias_restantes`.
-- A lista e o sinalizador de atraso estão disponíveis; o envio automático de lembretes por data ainda depende de uma regra de negócio para antecedência e destinatário.
+- O worker envia lembretes ao advogado responsável 7, 3 e 1 dia antes do vencimento, no dia do vencimento e diariamente enquanto o prazo estiver atrasado. A caixa interna é usada sempre; o e-mail é enfileirado quando o responsável tem e-mail verificado e `SINDCOMB_EMAIL_ENCRYPTION_KEY` está configurada. Cada aviso é idempotente por prazo/estágio/dia e usa `SINDCOMB_TIMEZONE`; outros advogados do processo não recebem os lembretes.
+
+### Cobertura das fontes e sugestões
+
+- O DataJud continua limitado a dez registros de processo por consulta e as movimentações retornadas por processo são limitadas a cem. A sincronização importa no máximo dez movimentações novas por ciclo para manter o processamento da IA previsível; `eventos_novos_disponiveis` no histórico informa o total e as demais são consideradas nos ciclos seguintes.
+- O DJEN é consultado em páginas de 50 publicações, até `SINDCOMB_DJEN_MAX_PAGES`; o histórico de sincronização registra quantidade e limites atingidos quando a fonte foi localizada. Falhas parciais aparecem no registro de sincronização, não como ausência confirmada do processo.
+- Uma heurística textual identifica publicações com termos relacionados a intimação, manifestação ou prazo e cria uma sugestão para revisão. É apenas uma triagem de texto: não interpreta a legislação, não calcula dias úteis, não infere o termo inicial e não cria prazo automaticamente.
+- DataJud e DJEN são fontes públicas complementares. A paginação e os resultados não garantem histórico integral nem substituem a conferência dos autos e da publicação oficial.
 
 ## Cadastro de advogado para teste
 

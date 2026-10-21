@@ -182,6 +182,7 @@ def extrair_candidato_datajud(
 ) -> ProcessoCandidato:
     """Converte os metadados públicos encontrados em dados para a triagem do sistema."""
     atualizacao = extrair_atualizacao(fonte)
+    movimentacoes = extrair_movimentacoes_publicas(fonte)
     partes: list[str] = []
     advogados: list[str] = []
 
@@ -216,5 +217,9 @@ def extrair_candidato_datajud(
         advogados=list(dict.fromkeys(nome for nome in advogados if nome)),
         associados_mencionados=list(dict.fromkeys(nome for nome in partes if nome)),
         ultima_movimentacao=atualizacao["ultima_movimentacao"],
-        movimentacoes_publicas=extrair_movimentacoes_publicas(fonte),
+        movimentacoes_publicas=movimentacoes,
+        cobertura_consulta={
+            "movimentacoes_datajud_consultadas": len(movimentacoes),
+            "limite_movimentacoes_datajud_atingido": len(movimentacoes) >= 100,
+        },
     )

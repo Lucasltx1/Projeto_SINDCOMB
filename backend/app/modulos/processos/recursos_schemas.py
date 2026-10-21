@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 StatusPeticao = Literal["rascunho", "em_revisao", "rejeitada", "aprovada", "protocolada"]
@@ -26,6 +26,10 @@ class ComentarioProcessoEntrada(BaseModel):
     conteudo: str = Field(min_length=1, max_length=5000)
 
 
+class ComentarioProcessoAtualizacao(BaseModel):
+    conteudo: str = Field(min_length=1, max_length=5000)
+
+
 class ComentarioProcessoSaida(BaseModel):
     id_comentario: int
     id_processo: int
@@ -33,6 +37,8 @@ class ComentarioProcessoSaida(BaseModel):
     autor: str | None
     conteudo: str
     criado_em: datetime
+    editado_em: datetime | None = None
+    excluido_em: datetime | None = None
 
 
 class ModeloPeticaoEntrada(BaseModel):
@@ -82,8 +88,134 @@ class PeticaoAtualizacao(BaseModel):
 
 
 class PeticaoStatusEntrada(BaseModel):
-    status: Literal["em_revisao", "rejeitada", "aprovada", "protocolada"]
+    status: Literal["em_revisao", "rejeitada", "aprovada"]
     observacao: str | None = Field(default=None, max_length=2_000)
+
+
+class PeticaoRevisorEntrada(BaseModel):
+    id_usuario: int
+
+
+class PeticaoRevisorSaida(BaseModel):
+    id_peticao: int
+    id_usuario: int
+    nome: str
+    oab: str
+    atribuido_por: int | None
+    atribuido_em: datetime
+
+
+class PeticaoComentarioEntrada(BaseModel):
+    id_versao: int
+    conteudo: str = Field(min_length=1, max_length=5000)
+
+
+class PeticaoComentarioAtualizacao(BaseModel):
+    conteudo: str = Field(min_length=1, max_length=5000)
+
+
+class PeticaoComentarioResolucao(BaseModel):
+    resolvido: bool
+
+
+class PeticaoComentarioSaida(BaseModel):
+    id_comentario: int
+    id_peticao: int
+    id_versao: int
+    id_usuario: int | None
+    autor: str | None
+    conteudo: str
+    criado_em: datetime
+    editado_em: datetime | None
+    resolvido_em: datetime | None
+    resolvido_por: int | None
+    excluido_em: datetime | None
+
+
+class PeticaoProtocoloEntrada(BaseModel):
+    protocolado_em: datetime
+    tribunal: str = Field(min_length=2, max_length=120)
+    numero_protocolo: str | None = Field(default=None, max_length=200)
+    id_documento_comprovante: int | None = None
+    observacao: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("tribunal")
+    @classmethod
+    def normalizar_tribunal(cls, valor: str) -> str:
+        normalizado = valor.strip()
+        if not normalizado:
+            raise ValueError("Informe o tribunal.")
+        return normalizado
+
+    @field_validator("numero_protocolo", "observacao")
+    @classmethod
+    def normalizar_campos_opcionais(cls, valor: str | None) -> str | None:
+        normalizado = valor.strip() if valor is not None else None
+        return normalizado or None
+
+    @model_validator(mode="after")
+    def exigir_identificador_ou_comprovante(self):
+        if not self.numero_protocolo and self.id_documento_comprovante is None:
+            raise ValueError("Informe o número do protocolo ou anexe o documento comprovante.")
+        if self.protocolado_em.tzinfo is None:
+            raise ValueError("A data do protocolo precisa incluir fuso horário.")
+        return self
+
+
+class PeticaoProtocoloSaida(BaseModel):
+    id_protocolo: int
+    id_peticao: int
+    id_usuario: int | None
+    id_documento_comprovante: int | None
+    numero_protocolo: str | None
+    tribunal: str
+    protocolado_em: datetime
+    observacao: str | None
+    registrado_em: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotificacaoInternaSaida(BaseModel):
+    id_notificacao: int
+    id_processo: int | None
+    categoria: str
+    titulo: str
+    mensagem: str
+    criado_em: datetime
+    lida_em: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotificacoesListaSaida(BaseModel):
+    itens: list[NotificacaoInternaSaida]
+    total: int
+    nao_lidas: int
+    limite: int
+    deslocamento: int
+
+
+class SugestaoPrazoSaida(BaseModel):
+    id_sugestao: int
+    id_processo: int
+    texto_fonte: str
+    data_publicacao: datetime | None
+    fonte: str
+    fonte_url: str | None
+    status: Literal["pendente", "confirmada", "descartada"]
+    criado_em: datetime
+    revisado_em: datetime | None
+    revisado_por: int | None
+    id_prazo: int | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SugestaoPrazoConfirmacao(BaseModel):
+    data_vencimento: date
+    descricao: str | None = Field(default=None, max_length=5000)
+    id_usuario_responsavel: int | None = None
 
 
 class VersaoPeticaoSaida(BaseModel):
