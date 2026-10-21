@@ -5,6 +5,8 @@ from typing import Literal
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
+from .schemas import MovimentacaoPublica, MovimentacaoRegistro
+
 
 class ResultadoInterpretacao(BaseModel):
     resumo: str = Field(min_length=1, max_length=1000)
@@ -25,6 +27,24 @@ class ResultadoTriagemModelo(BaseModel):
     justificativa: str = Field(min_length=1, max_length=1200)
     evidencias: list[str] = Field(max_length=10)
     confianca: float = Field(ge=0, le=1)
+
+
+async def interpretar_movimentacao_publica(
+    movimento: MovimentacaoPublica,
+    fonte_padrao: Literal["datajud", "djen"],
+) -> MovimentacaoRegistro:
+    interpretacao = await interpretar_movimentacao(movimento.texto)
+    fonte = movimento.fonte_dados or fonte_padrao
+    return MovimentacaoRegistro(
+        texto=movimento.texto,
+        resumo=interpretacao.resumo,
+        categoria=interpretacao.categoria,
+        requer_atencao=interpretacao.requer_atencao,
+        fonte_url=movimento.fonte_url,
+        fonte_dados=fonte,
+        data_fonte=movimento.data_fonte,
+        registrada_por="DJEN/CNJ" if fonte == "djen" else "DataJud",
+    )
 
 
 def _cliente() -> AsyncOpenAI:

@@ -18,16 +18,24 @@ from .auth import (
 )
 from .consulta_processual_service import consultar_por_numero
 from .email_outbox import enfileirar_notificacao_processo
-from .models import RegistroSincronizacao
+from .models import PermissaoProcessoDB, RegistroSincronizacao
 from .numero_cnj import alias_datajud_por_numero
 from .recursos_acesso import obter_processo_autorizado, registrar_auditoria
 from .recursos_schemas import SincronizacaoSaida
-from .repository import adicionar, listar, obter, obter_por_numero, salvar
+from .repository import (
+    adicionar,
+    conceder_acesso_edicao_se_ausente,
+    listar,
+    obter,
+    obter_por_numero,
+    salvar,
+)
 from .schemas import (
     AlteracaoStatus,
     AuditoriaListaSaida,
     HistoricoStatus,
     MovimentacaoEntrada,
+    MovimentacaoPublica,
     MovimentacaoRegistro,
     ProcessoCandidato,
     ProcessoRegistro,
@@ -38,7 +46,11 @@ from .schemas import (
 )
 from .sincronizacao_service import sincronizar_processos
 from .worker_locks import lock_distribuido
-from .status_service import classificar_interesse, interpretar_movimentacao
+from .status_service import (
+    classificar_interesse,
+    interpretar_movimentacao,
+    interpretar_movimentacao_publica,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/processos", tags=["Processos"])
@@ -123,6 +135,11 @@ async def cadastrar_para_triagem(
     except ValueError as erro:
         logger.exception("Um provedor processual retornou dados inválidos.")
         raise HTTPException(status_code=502, detail="Um provedor retornou dados processuais inválidos.") from erro
+    if consulta.falhas_fontes:
+        logger.warning(
+            "Triagem processual concluída parcialmente; fontes indisponíveis: %s",
+            ",".join(consulta.falhas_fontes),
+        )
 
     if consulta.processo is None:
         return resposta_generica
@@ -130,20 +147,27 @@ async def cadastrar_para_triagem(
     dados = consulta.processo
     try:
         triagem_modelo = await classificar_interesse(dados.model_dump(mode="json"))
-        movimentos: list[MovimentacaoRegistro] = []
-        if dados.ultima_movimentacao:
-            interpretacao = await interpretar_movimentacao(dados.ultima_movimentacao)
-            movimentos.append(
-                MovimentacaoRegistro(
+        eventos_publicos = dados.movimentacoes_publicas
+        if not eventos_publicos and dados.ultima_movimentacao:
+            eventos_publicos = [
+                MovimentacaoPublica(
                     texto=dados.ultima_movimentacao,
-                    resumo=interpretacao.resumo,
-                    categoria=interpretacao.categoria,
-                    requer_atencao=interpretacao.requer_atencao,
                     fonte_url=dados.fonte_url,
                     fonte_dados=dados.origem_dados,
-                    registrada_por=usuario.id,
                 )
+            ]
+        eventos_recentes = sorted(
+            eventos_publicos,
+            key=lambda evento: evento.data_fonte or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )[:10]
+        movimentos = [
+            await interpretar_movimentacao_publica(evento, dados.origem_dados or "datajud")
+            for evento in sorted(
+                eventos_recentes,
+                key=lambda evento: evento.data_fonte or datetime.min.replace(tzinfo=timezone.utc),
             )
+        ]
     except (APIConnectionError, APIError, ValidationError, ValueError) as erro:
         raise _erro_ml(erro) from erro
 
@@ -155,7 +179,8 @@ async def cadastrar_para_triagem(
         movimentacoes=movimentos,
         historico_status=[HistoricoStatus(de=None, para="novo", alterado_por=usuario.id, observacao="Cadastro inicial")],
     )
-    if obter_por_numero(sessao, dados.numero) is None:
+    processo_existente = obter_por_numero(sessao, dados.numero)
+    if processo_existente is None:
         try:
             adicionar(sessao, registro)
         except IntegrityError as erro:
@@ -164,6 +189,36 @@ async def cadastrar_para_triagem(
             if restricao != "processo_numero_processo_key":
                 raise
             logger.info("Cadastro concorrente de processo CNJ já inserido; resposta genérica mantida.")
+    else:
+        usuario_id = int(usuario.id)
+        try:
+            acesso_concedido = conceder_acesso_edicao_se_ausente(
+                sessao,
+                usuario_id=usuario_id,
+                processo_id=int(processo_existente.id),
+            )
+            if acesso_concedido:
+                registrar_auditoria(
+                    sessao,
+                    usuario_id=usuario_id,
+                    processo_id=int(processo_existente.id),
+                    operacao="acesso_processo_compartilhado",
+                    descricao="Advogado vinculado a processo já cadastrado.",
+                )
+                sessao.commit()
+        except IntegrityError as erro:
+            restricao = getattr(getattr(erro.orig, "diag", None), "constraint_name", None)
+            if restricao != "permissao_processo_id_usuario_id_processo_key":
+                raise
+            sessao.rollback()
+            acesso_existente = sessao.scalar(
+                select(PermissaoProcessoDB).where(
+                    PermissaoProcessoDB.id_usuario == usuario_id,
+                    PermissaoProcessoDB.id_processo == int(processo_existente.id),
+                )
+            )
+            if acesso_existente is None:
+                raise
     return resposta_generica
 
 

@@ -141,6 +141,23 @@ class PermissaoProcessoDB(Base):
     )
 
 
+class ComentarioProcessoDB(Base):
+    __tablename__ = "comentario_processo"
+    __table_args__ = (Index("ix_comentario_processo_data", "id_processo", "criado_em"),)
+
+    id_comentario: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id_processo: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("processo.id_processo", ondelete="RESTRICT"), index=True
+    )
+    id_usuario: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("usuario.id_usuario", ondelete="SET NULL"), nullable=True
+    )
+    conteudo: Mapped[str] = mapped_column(Text)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
 class LinhaTempoDB(Base):
     __tablename__ = "linha_tempo"
 

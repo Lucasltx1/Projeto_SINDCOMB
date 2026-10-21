@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.modulos.processos.auth_router import admin_router, auth_router
+from app.modulos.processos.comentarios_router import router as comentarios_router
 from app.modulos.processos.documentos_router import router as documentos_router
 from app.modulos.processos.peticoes_router import router as peticoes_router
 from app.modulos.processos.prazos_router import router as prazos_router
@@ -119,6 +120,7 @@ async def readiness_check(request: Request) -> dict[str, str]:
 
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(comentarios_router)
 app.include_router(processos_router)
 app.include_router(documentos_router)
 app.include_router(peticoes_router)

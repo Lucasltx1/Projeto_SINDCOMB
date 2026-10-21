@@ -17,10 +17,14 @@ export interface Parte {
 }
 
 export interface Movimentacao {
-    data: string;
-    descricao: string;
-    tipo: "Audiência" | "Despacho" | "Decisão" | "Sentença" | "Recurso" | "Outros";
-    resumo?: string;
+    texto: string;
+    resumo: string;
+    categoria: "andamento" | "intimacao" | "despacho" | "sentenca" | "peticao" | "prazo" | "outro";
+    requer_atencao: boolean;
+    fonte_url?: string | null;
+    fonte_dados?: "datajud" | "djen" | "manual" | null;
+    data_fonte?: string | null;
+    registrada_em: string;
 }
 
 export interface Prazo {

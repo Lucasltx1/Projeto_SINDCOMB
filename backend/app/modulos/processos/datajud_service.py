@@ -1,12 +1,13 @@
 import asyncio
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
 from .numero_cnj import numero_cnj_sem_formatacao
-from .schemas import ProcessoCandidato
+from .schemas import MovimentacaoPublica, ProcessoCandidato
 
 DATAJUD_BASE_URL = "https://api-publica.datajud.cnj.jus.br"
 
@@ -110,6 +111,72 @@ def extrair_atualizacao(fonte: dict[str, Any]) -> dict[str, str | None]:
     }
 
 
+def extrair_movimentacoes_publicas(
+    fonte: dict[str, Any], limite: int = 100
+) -> list[MovimentacaoPublica]:
+    movimentos = fonte.get("movimentos") or fonte.get("movimento") or []
+    if isinstance(movimentos, dict):
+        movimentos = [movimentos]
+    if not isinstance(movimentos, list):
+        return []
+
+    resultado: list[MovimentacaoPublica] = []
+    chaves_vistas: set[tuple[str, str | None]] = set()
+    for movimento in movimentos:
+        if not isinstance(movimento, dict):
+            continue
+
+        movimento_nacional = movimento.get("movimentoNacional")
+        nome_nacional = (
+            movimento_nacional.get("nome")
+            if isinstance(movimento_nacional, dict)
+            else None
+        )
+        nome = movimento.get("nome") or nome_nacional
+        complemento = movimento.get("complemento") or movimento.get("complementosTabelados")
+        if isinstance(complemento, list):
+            complemento = "; ".join(
+                str(item.get("nome") or item.get("descricao") or "")
+                for item in complemento
+                if isinstance(item, dict)
+            )
+        texto = " — ".join(str(valor).strip() for valor in (nome, complemento) if valor)
+        if not texto:
+            continue
+
+        data_fonte = _data_hora(movimento.get("dataHora") or movimento.get("data"))
+        data_chave = data_fonte.isoformat() if data_fonte else None
+        chave = (" ".join(texto.split()).casefold(), data_chave)
+        if chave in chaves_vistas:
+            continue
+        chaves_vistas.add(chave)
+        resultado.append(
+            MovimentacaoPublica(
+                texto=texto[:20000],
+                data_fonte=data_fonte,
+                fonte_dados="datajud",
+            )
+        )
+
+    resultado.sort(key=lambda item: item.data_fonte or datetime.min.replace(tzinfo=timezone.utc))
+    return resultado[-max(1, min(limite, 100)):]
+
+
+def _data_hora(valor: Any) -> datetime | None:
+    if not isinstance(valor, str) or not valor.strip():
+        return None
+    texto = valor.strip()
+    if texto.endswith("Z"):
+        texto = f"{texto[:-1]}+00:00"
+    try:
+        resultado = datetime.fromisoformat(texto)
+    except ValueError:
+        return None
+    if resultado.tzinfo is None:
+        return resultado.replace(tzinfo=timezone.utc)
+    return resultado.astimezone(timezone.utc)
+
+
 def extrair_candidato_datajud(
     fonte: dict[str, Any], numero_formatado: str, tribunal_alias: str
 ) -> ProcessoCandidato:
@@ -149,4 +216,5 @@ def extrair_candidato_datajud(
         advogados=list(dict.fromkeys(nome for nome in advogados if nome)),
         associados_mencionados=list(dict.fromkeys(nome for nome in partes if nome)),
         ultima_movimentacao=atualizacao["ultima_movimentacao"],
+        movimentacoes_publicas=extrair_movimentacoes_publicas(fonte),
     )

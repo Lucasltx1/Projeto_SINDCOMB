@@ -17,6 +17,13 @@ StatusProcesso = Literal[
 TipoParte = Literal["sindicato", "advogado", "associado"]
 
 
+class MovimentacaoPublica(BaseModel):
+    texto: str = Field(min_length=1, max_length=20000)
+    data_fonte: datetime | None = None
+    fonte_url: HttpUrl | None = None
+    fonte_dados: Literal["datajud", "djen"] | None = None
+
+
 class ProcessoCandidato(BaseModel):
     numero: str = Field(min_length=1, max_length=50)
     tribunal: str = Field(default="Tribunal não identificado", min_length=1, max_length=120)
@@ -27,6 +34,9 @@ class ProcessoCandidato(BaseModel):
     advogados: list[str] = Field(default_factory=list, max_length=100)
     associados_mencionados: list[str] = Field(default_factory=list, max_length=100)
     ultima_movimentacao: str | None = Field(default=None, max_length=20000)
+    movimentacoes_publicas: list[MovimentacaoPublica] = Field(
+        default_factory=list, max_length=100, exclude=True
+    )
     fonte_url: HttpUrl | None = None
     origem_dados: Literal["datajud", "djen"] | None = None
     consultado_em: datetime | None = None
@@ -59,6 +69,7 @@ class MovimentacaoRegistro(BaseModel):
     requer_atencao: bool
     fonte_url: HttpUrl | None = None
     fonte_dados: Literal["datajud", "djen", "manual"] | None = None
+    data_fonte: datetime | None = None
     registrada_por: str
     registrada_em: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

@@ -2,7 +2,7 @@
 
 `001_postgresql_schema.sql` é o esquema PostgreSQL 17.11 exportado do banco que foi modelado no Supabase. Supabase foi apenas a origem do dump; a aplicação usa PostgreSQL autogerenciado no Docker Compose.
 
-O dump contém 16 tabelas e nenhuma linha de dados. O Compose monta o arquivo em `/docker-entrypoint-initdb.d`, executado automaticamente quando o volume `postgres_data` está vazio. O backend complementa o esquema com os campos necessários para autenticação, triagem de processos e auditoria, usando as tabelas `usuario`, `juridico`, `associado`, `processo`, `processo_associado`, `permissao_processo`, `linha_tempo`, `auditoria` e `sincronizacao`.
+O dump contém 16 tabelas e nenhuma linha de dados. O Compose monta o arquivo em `/docker-entrypoint-initdb.d`, executado automaticamente quando o volume `postgres_data` está vazio. O backend complementa o esquema com os campos necessários para autenticação, triagem de processos e auditoria, usando as tabelas `usuario`, `juridico`, `associado`, `processo`, `processo_associado`, `permissao_processo`, `linha_tempo`, `auditoria`, `sincronizacao` e tabelas auxiliares como `comentario_processo`.
 
 Na inicialização, o backend também permite `NULL` em `usuario.email` e remove esse dado da conta administrativa antiga, se houver. A conta fixa `adm_sindcomb` não tem e-mail/contato; o e-mail continua obrigatório nos cadastros de advogados pela API.
 
@@ -13,6 +13,6 @@ docker compose up -d postgres
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U sindcomb -d sindcomb -f /docker-entrypoint-initdb.d/001_postgresql_schema.sql
 ```
 
-Depois reinicie o backend. No início, ele cria as tabelas auxiliares ausentes e aplica extensões idempotentes. Entre elas, a autoria de petições e prazos torna-se anulável e passa a usar `ON DELETE SET NULL`, para que a exclusão administrativa de um advogado preserve o histórico sem reter sua referência de usuário. Não apague `postgres_data` para aplicar essas mudanças.
+Depois reinicie o backend. No início, ele cria as tabelas auxiliares ausentes, incluindo comentários compartilhados por processo, e aplica extensões idempotentes. A autoria dos comentários, petições e prazos usa `ON DELETE SET NULL`, para que a exclusão administrativa de um advogado preserve o conteúdo/histórico sem reter sua referência de usuário. Não apague `postgres_data` para aplicar essas mudanças.
 
 A aplicação e o backend falam com o PostgreSQL pela rede interna do Compose em `postgres:5432`; a porta não precisa ser publicada no host.

@@ -454,6 +454,33 @@ def obter_por_numero(sessao: Session, numero: str) -> ProcessoRegistro | None:
     return _para_schema(sessao, linha) if linha else None
 
 
+def conceder_acesso_edicao_se_ausente(
+    sessao: Session,
+    *,
+    usuario_id: int,
+    processo_id: int,
+) -> bool:
+    """Compartilha o registro com advogado que o cadastrou sem elevar permissões existentes."""
+    permissao = sessao.scalar(
+        select(PermissaoProcessoDB).where(
+            PermissaoProcessoDB.id_usuario == usuario_id,
+            PermissaoProcessoDB.id_processo == processo_id,
+        )
+    )
+    if permissao is not None:
+        return False
+
+    sessao.add(
+        PermissaoProcessoDB(
+            id_usuario=usuario_id,
+            id_processo=processo_id,
+            nivel_acesso="edicao",
+        )
+    )
+    sessao.flush()
+    return True
+
+
 def _associados_correspondentes(sessao: Session, dados: ProcessoCandidato) -> list[AssociadoDB]:
     nomes_mencionados = {
         _normalizar_nome(nome)
@@ -485,7 +512,12 @@ def _advogados_correspondentes(sessao: Session, dados: ProcessoCandidato) -> lis
 
 def _adicionar_movimentacao(sessao: Session, processo_id: int, movimento: MovimentacaoRegistro) -> None:
     usuario_id = _id_usuario(movimento.registrada_por)
-    origem = "automatico" if movimento.registrada_por.casefold() == "datajud" else "manual"
+    origem = (
+        "automatico"
+        if movimento.fonte_dados in {"datajud", "djen"}
+        or movimento.registrada_por.casefold() == "datajud"
+        else "manual"
+    )
     sessao.add(
         LinhaTempoDB(
             id_processo=processo_id,

@@ -13,7 +13,7 @@ from urllib.parse import urlencode, urlparse
 import httpx
 
 from .numero_cnj import normalizar_numero_cnj, numero_cnj_sem_formatacao
-from .schemas import ProcessoCandidato
+from .schemas import MovimentacaoPublica, ProcessoCandidato
 
 DJEN_API_BASE_URL = "https://comunicaapi.pje.jus.br/api/v1"
 
@@ -159,18 +159,46 @@ async def buscar_candidato_por_numero(
     if not comunicacoes:
         return None
 
-    ultima = max(comunicacoes, key=lambda item: _data(item) or datetime.min.replace(tzinfo=timezone.utc))
-    data_publicacao = _data(ultima)
-    tipo = _texto(ultima, "tipoComunicacao", "tipo_comunicacao", "meio")
-    orgao = _texto(ultima, "nomeOrgao", "nome_orgao", "orgao")
-    teor = _limpar_html(
-        _texto(ultima, "texto", "teor", "conteudo", "descricao")
+    comunicacoes.sort(
+        key=lambda item: _data(item) or datetime.min.replace(tzinfo=timezone.utc)
     )
-    detalhes = [valor for valor in (tipo, orgao, teor) if valor]
-    texto_movimentacao = " — ".join(detalhes) or "Publicação localizada no DJEN."
+    movimentacoes: list[MovimentacaoPublica] = []
+    chaves_vistas: set[tuple[str, str | None]] = set()
+    for comunicacao in comunicacoes:
+        tipo = _texto(comunicacao, "tipoComunicacao", "tipo_comunicacao", "meio")
+        orgao = _texto(comunicacao, "nomeOrgao", "nome_orgao", "orgao")
+        teor = _limpar_html(
+            _texto(comunicacao, "texto", "teor", "conteudo", "descricao")
+        )
+        detalhes = [valor for valor in (tipo, orgao, teor) if valor]
+        texto = " — ".join(detalhes) or "Publicação localizada no DJEN."
+        data_fonte = _data(comunicacao)
+        chave = (
+            " ".join(texto.split()).casefold(),
+            data_fonte.isoformat() if data_fonte else None,
+        )
+        if chave in chaves_vistas:
+            continue
+        chaves_vistas.add(chave)
+        movimentacoes.append(
+            MovimentacaoPublica(
+                texto=texto[:20000],
+                data_fonte=data_fonte,
+                fonte_url=_url_oficial(comunicacao, numero_sem_mascara),
+                fonte_dados="djen",
+            )
+        )
+
+    ultima = comunicacoes[-1]
+    movimentacao_recente = movimentacoes[-1] if movimentacoes else None
+    data_publicacao = _data(ultima)
+    texto_movimentacao = (
+        movimentacao_recente.texto
+        if movimentacao_recente
+        else "Publicação localizada no DJEN."
+    )
     if data_publicacao:
         texto_movimentacao = f"Disponibilizada em {data_publicacao.isoformat()} — {texto_movimentacao}"
-
     tribunal = _texto(ultima, "nomeTribunal", "tribunal", "siglaTribunal", "sigla_tribunal")
     if not tribunal:
         tribunal = f"Tribunal {tribunal_alias.upper()}"
@@ -184,6 +212,11 @@ async def buscar_candidato_por_numero(
         classe=classe[:100] if classe else None,
         assunto=assunto[:2000],
         ultima_movimentacao=texto_movimentacao[:20000],
-        fonte_url=_url_oficial(ultima, numero_sem_mascara),
+        movimentacoes_publicas=movimentacoes[-100:],
+        fonte_url=(
+            movimentacao_recente.fonte_url
+            if movimentacao_recente
+            else _url_oficial(ultima, numero_sem_mascara)
+        ),
         data_ultima_verificacao_fonte=None,
     )

@@ -22,6 +22,19 @@ class DocumentoSaida(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ComentarioProcessoEntrada(BaseModel):
+    conteudo: str = Field(min_length=1, max_length=5000)
+
+
+class ComentarioProcessoSaida(BaseModel):
+    id_comentario: int
+    id_processo: int
+    id_usuario: int | None
+    autor: str | None
+    conteudo: str
+    criado_em: datetime
+
+
 class ModeloPeticaoEntrada(BaseModel):
     nome: str = Field(min_length=2, max_length=150)
     tipo: str = Field(min_length=2, max_length=100)

@@ -47,6 +47,7 @@ export default function ProcessosPage() {
   const [processos, setProcessos] = useState<Processo[]>([]);
   const [mostrarArquivados, setMostrarArquivados] = useState(false);
   const [carregando, setCarregando] = useState(true);
+  const [sincronizando, setSincronizando] = useState(false);
   const [acaoEmAndamento, setAcaoEmAndamento] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState("");
   const [erro, setErro] = useState("");
@@ -110,6 +111,43 @@ export default function ProcessosPage() {
     }
   }
 
+  async function sincronizarAgora() {
+    if (!csrfToken || perfil?.papel !== "advogado") return;
+    setErro("");
+    setMensagem("");
+    setSincronizando(true);
+    try {
+      const resposta = await fetch(`${API_URL}/api/v1/processos/sincronizar`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRF-Token": csrfToken },
+      });
+      const resultado = await resposta.json();
+      if (!resposta.ok) throw new Error(resultado.detail ?? "Não foi possível sincronizar os processos.");
+
+      const respostaProcessos = await fetch(
+        `${API_URL}/api/v1/processos?arquivado=${mostrarArquivados}`,
+        { credentials: "include" },
+      );
+      const dadosProcessos = await respostaProcessos.json();
+      if (!respostaProcessos.ok) {
+        throw new Error(dadosProcessos.detail ?? "Sincronização concluída, mas não foi possível atualizar a lista.");
+      }
+      setProcessos(dadosProcessos);
+      const avisos = resultado.falhas?.length
+        ? ` Avisos: ${resultado.falhas.join(" ")}`
+        : "";
+      setMensagem(
+        `Sincronização concluída: ${resultado.processos_consultados} processo(s) consultado(s), `
+        + `${resultado.processos_com_movimentacao_nova} com novas movimentações.${avisos}`,
+      );
+    } catch (error) {
+      setErro(error instanceof Error ? error.message : "Falha de conexão com a API.");
+    } finally {
+      setSincronizando(false);
+    }
+  }
+
   return (
     <main className="min-h-screen px-6 py-10 sm:px-10">
       <section className="mx-auto max-w-5xl">
@@ -120,13 +158,26 @@ export default function ProcessosPage() {
               {perfil ? `Sessão de ${perfil.nome}` : "Acompanhamento processual SINDCOMB"}
             </p>
           </div>
-          <Button asChild variant="outline"><Link href="/">Início</Link></Button>
+          <div className="flex flex-wrap gap-2">
+            {perfil?.papel === "advogado" && (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={sincronizando || carregando}
+                onClick={sincronizarAgora}
+              >
+                {sincronizando ? "Sincronizando…" : "Sincronizar agora"}
+              </Button>
+            )}
+            <Button asChild variant="outline"><Link href="/">Início</Link></Button>
+          </div>
         </header>
 
         <div className="mt-8 flex gap-2" aria-label="Filtro de arquivamento">
           <Button
             type="button"
             variant={!mostrarArquivados ? "default" : "outline"}
+            disabled={sincronizando}
             onClick={() => setMostrarArquivados(false)}
           >
             Ativos
@@ -134,6 +185,7 @@ export default function ProcessosPage() {
           <Button
             type="button"
             variant={mostrarArquivados ? "default" : "outline"}
+            disabled={sincronizando}
             onClick={() => setMostrarArquivados(true)}
           >
             Arquivados
@@ -197,7 +249,7 @@ export default function ProcessosPage() {
               </CardContent>
               <CardFooter className="flex flex-wrap gap-2">
                 <Button asChild variant="outline">
-                  <Link href={`/processos/${encodeURIComponent(processo.dados.numero)}`}>Ver processo</Link>
+                  <Link href={`/processos/${encodeURIComponent(processo.id)}`}>Ver processo</Link>
                 </Button>
                 {perfil?.papel === "advogado" && (
                   processo.arquivado ? (

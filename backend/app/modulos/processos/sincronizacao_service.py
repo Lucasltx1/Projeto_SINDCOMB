@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import re
+import unicodedata
 
 import httpx
 from openai import APIConnectionError, APIError
@@ -17,14 +19,33 @@ from .models import PermissaoProcessoDB, RegistroSincronizacao
 from .numero_cnj import alias_datajud_por_numero
 from .repository import listar, salvar
 from .schemas import (
-    MovimentacaoRegistro,
+    MovimentacaoPublica,
     ProcessoRegistro,
     ResultadoSincronizacao,
     ResultadoTriagem,
 )
-from .status_service import classificar_interesse, interpretar_movimentacao
+from .status_service import classificar_interesse, interpretar_movimentacao_publica
 
 logger = logging.getLogger(__name__)
+_PREFIXO_DATA_DJEN = re.compile(r"^disponibilizada em .+? — ", re.IGNORECASE)
+
+
+def _normalizar_texto_movimentacao(texto: str) -> str:
+    sem_data = _PREFIXO_DATA_DJEN.sub("", texto.strip())
+    normalizado = unicodedata.normalize("NFKD", sem_data.casefold())
+    sem_acentos = "".join(
+        caractere
+        for caractere in normalizado
+        if not unicodedata.combining(caractere)
+    )
+    return " ".join(sem_acentos.split())
+
+
+def _chave_movimentacao(movimento: MovimentacaoPublica) -> tuple[str, str | None]:
+    return (
+        _normalizar_texto_movimentacao(movimento.texto),
+        movimento.data_fonte.isoformat() if movimento.data_fonte else None,
+    )
 
 
 async def sincronizar_processos(
@@ -60,6 +81,7 @@ async def sincronizar_processos(
         encontrado = False
         fonte_encontrada: str | None = None
         fontes_consultadas: tuple[str, ...] = ("datajud",)
+        falhas_fontes: tuple[str, ...] = ()
         consultados += 1
 
         try:
@@ -67,6 +89,7 @@ async def sincronizar_processos(
                 alias = alias_datajud_por_numero(processo.dados.numero)
             consulta = await consultar_por_numero(processo.dados.numero, alias)
             fontes_consultadas = consulta.fontes_consultadas
+            falhas_fontes = consulta.falhas_fontes
             candidato = consulta.processo
             fonte_encontrada = consulta.fonte
             if candidato is None:
@@ -86,51 +109,99 @@ async def sincronizar_processos(
                 if candidato.assunto != "Assunto não informado":
                     dados_update["assunto"] = candidato.assunto
 
-                movimento_novo = candidato.ultima_movimentacao
+                eventos_publicos = list(candidato.movimentacoes_publicas)
+                if not eventos_publicos and candidato.ultima_movimentacao:
+                    eventos_publicos.append(
+                        MovimentacaoPublica(
+                            texto=candidato.ultima_movimentacao,
+                            fonte_url=candidato.fonte_url,
+                            fonte_dados=consulta.fonte,
+                        )
+                    )
 
+                chaves_existentes = {
+                    _chave_movimentacao(
+                        MovimentacaoPublica(
+                            texto=movimento.texto,
+                            data_fonte=movimento.data_fonte,
+                            fonte_dados=movimento.fonte_dados,
+                        )
+                    )
+                    for movimento in processo.movimentacoes
+                }
+                textos_legados_sem_data = {
+                    _normalizar_texto_movimentacao(movimento.texto)
+                    for movimento in processo.movimentacoes
+                    if movimento.data_fonte is None
+                    and movimento.fonte_dados in {"datajud", "djen"}
+                }
+                novos_por_chave: dict[tuple[str, str | None], MovimentacaoPublica] = {}
+                for evento in eventos_publicos:
+                    chave = _chave_movimentacao(evento)
+                    if chave in chaves_existentes:
+                        continue
+                    if chave[1] is not None and chave[0] in textos_legados_sem_data:
+                        continue
+                    novos_por_chave.setdefault(chave, evento)
+
+                eventos_recentes = sorted(
+                    novos_por_chave.values(),
+                    key=lambda evento: evento.data_fonte or datetime.min.replace(tzinfo=timezone.utc),
+                    reverse=True,
+                )[:10]
+                eventos_recentes.sort(
+                    key=lambda evento: evento.data_fonte or datetime.min.replace(tzinfo=timezone.utc)
+                )
+                novos_movimentos = [
+                    await interpretar_movimentacao_publica(evento, consulta.fonte or "datajud")
+                    for evento in eventos_recentes
+                ]
+
+                movimento_novo = candidato.ultima_movimentacao
+                triagem = processo.triagem
                 if movimento_novo and movimento_novo != processo.dados.ultima_movimentacao:
-                    interpretacao = await interpretar_movimentacao(movimento_novo)
                     triagem_modelo = await classificar_interesse(
                         processo.dados.model_copy(
                             update={**dados_update, "ultima_movimentacao": movimento_novo}
                         ).model_dump(mode="json")
                     )
+                    triagem = ResultadoTriagem.model_validate(triagem_modelo.model_dump())
                     dados_update["ultima_movimentacao"] = movimento_novo
-                    movimento = MovimentacaoRegistro(
-                        texto=movimento_novo,
-                        resumo=interpretacao.resumo,
-                        categoria=interpretacao.categoria,
-                        requer_atencao=interpretacao.requer_atencao,
-                        fonte_url=candidato.fonte_url,
-                        fonte_dados=consulta.fonte,
-                        registrada_por="DJEN/CNJ" if consulta.fonte == "djen" else "DataJud",
-                    )
-                    atualizado = salvar(
-                        sessao,
-                        processo.model_copy(
-                            update={
-                                "dados": processo.dados.model_copy(update=dados_update),
-                                "triagem": ResultadoTriagem.model_validate(triagem_modelo.model_dump()),
-                                "movimentacoes": [*processo.movimentacoes, movimento],
-                            }
-                        ),
-                        commit=False,
+
+                atualizado = salvar(
+                    sessao,
+                    processo.model_copy(
+                        update={
+                            "dados": processo.dados.model_copy(update=dados_update),
+                            "triagem": triagem,
+                            "movimentacoes": [*processo.movimentacoes, *novos_movimentos],
+                        }
+                    ),
+                    commit=False,
+                )
+                if novos_movimentos:
+                    resumo_notificacao = "\n\n".join(
+                        f"{movimento.data_fonte.isoformat() + ' — ' if movimento.data_fonte else ''}"
+                        f"Fonte: {movimento.fonte_dados or 'não informada'}\n"
+                        f"{movimento.resumo}\nMovimentação: {movimento.texto}"
+                        for movimento in novos_movimentos
                     )
                     enfileirar_notificacao_processo(
                         sessao,
                         atualizado,
-                        "Nova movimentação processual",
-                        f"{interpretacao.resumo}\n\nMovimentação: {movimento_novo}",
+                        "Novas movimentações processuais",
+                        resumo_notificacao,
                     )
-                    sessao.commit()
                     movimentos_novos += 1
-                    atualizacoes = 1
-                elif dados_update:
-                    salvar(
-                        sessao,
-                        processo.model_copy(update={"dados": processo.dados.model_copy(update=dados_update)}),
-                    )
+                    atualizacoes = len(novos_movimentos)
+                sessao.commit()
                 status_sync = "encontrado"
+                if falhas_fontes:
+                    erro_texto = "; ".join(falhas_fontes)
+                    falhas.append(
+                        f"{processo.dados.numero}: consulta parcial; fonte(s) indisponível(is): "
+                        f"{','.join(falhas_fontes)}."
+                    )
 
         except httpx.HTTPStatusError as erro:
             sessao.rollback()
@@ -158,6 +229,7 @@ async def sincronizar_processos(
                     f"numero={processo.dados.numero}; tribunal={alias}; "
                     f"encontrado={encontrado}; fonte={fonte_encontrada or 'nenhuma'}; "
                     f"fontes_consultadas={','.join(fontes_consultadas)}; "
+                    f"fontes_com_falha={','.join(falhas_fontes) or 'nenhuma'}; "
                     f"erro={erro_texto or 'nenhum'}"
                 ),
                 quantidade_atualizacoes=atualizacoes,
