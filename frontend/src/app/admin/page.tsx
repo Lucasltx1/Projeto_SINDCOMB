@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -431,17 +432,6 @@ export default function AdminPage() {
     }
   }
 
-  // Mantém inputs HTML acessíveis: o projeto ainda não possui ui/input.tsx.
-  const estiloCampo =
-    "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50";
-
-  if (carregando) {
-    return (
-      <main className="p-8">
-        <p>Verificando acesso administrativo...</p>
-      </main>
-    );
-  }
 
   if (!perfil) {
     return (
@@ -524,8 +514,7 @@ export default function AdminPage() {
 
           <div className="grid gap-2">
             <Label htmlFor="adv-nome">Nome</Label>
-            <input id="adv-nome"
-              className={estiloCampo}
+            <Input id="adv-nome"
               required
               minLength={3}
               maxLength={150}
@@ -541,8 +530,7 @@ export default function AdminPage() {
 
           <div className="grid gap-2">
             <Label htmlFor="adv-email">E-mail</Label>
-            <input id="adv-email"
-              className={estiloCampo}
+            <Input id="adv-email"
               type="email"
               required
               disabled={editandoAdvogado !== null}
@@ -559,8 +547,7 @@ export default function AdminPage() {
 
           <div className="grid gap-2">
             <Label htmlFor="adv-oab">OAB</Label>
-            <input id="adv-oab"
-              className={estiloCampo}
+            <Input id="adv-oab"
               required
               minLength={3}
               maxLength={30}
@@ -682,8 +669,7 @@ export default function AdminPage() {
 
           <div className="grid gap-2">
             <Label htmlFor="assoc-nome">Nome</Label>
-            <input id="assoc-nome"
-              className={estiloCampo}
+            <Input id="assoc-nome"
               required
               minLength={2}
               maxLength={150}
@@ -699,8 +685,7 @@ export default function AdminPage() {
 
           <div className="grid gap-2">
             <Label htmlFor="assoc-cpf">CPF (opcional)</Label>
-            <input id="assoc-cpf"
-              className={estiloCampo}
+            <Input id="assoc-cpf"
               maxLength={14}
               value={formAssociado.cpf}
               onChange={(evento) =>
@@ -714,8 +699,7 @@ export default function AdminPage() {
 
           <div className="grid gap-2">
             <Label htmlFor="assoc-email">E-mail (opcional)</Label>
-            <input id="assoc-email"
-              className={estiloCampo}
+            <Input id="assoc-email"
               type="email"
               maxLength={255}
               value={formAssociado.email}
@@ -730,7 +714,7 @@ export default function AdminPage() {
 
           <div className="grid gap-2">
             <Label htmlFor="assoc-telefone">Telefone (opcional)</Label>
-            <input id="assoc-telefone"
+            <Input id="assoc-telefone"
               className={estiloCampo}
               type="tel"
               maxLength={25}
