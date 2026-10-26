@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@tiptap/react": "^3.32.0",
+    "@tiptap/starter-kit": "^3.32.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.2.6",
     "date-fns": "^4.4.0",
