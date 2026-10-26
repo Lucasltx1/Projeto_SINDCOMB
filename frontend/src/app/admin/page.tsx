@@ -4,6 +4,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -103,6 +107,20 @@ function mensagemErro(erro: unknown): string {
   return erro instanceof Error
     ? erro.message
     : "Ocorreu um erro inesperado.";
+}
+
+function cpfValido(valor: string): boolean {
+  const cpf = valor.replace(/\D/g, "");
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+  for (let tamanho = 9; tamanho < 11; tamanho++) {
+    let soma = 0;
+    for (let i = 0; i < tamanho; i++) {
+      soma += Number(cpf[i]) * (tamanho + 1 - i);
+    }
+    const digito = (soma * 10) % 11;
+    if ((digito === 10 ? 0 : digito) !== Number(cpf[tamanho])) return false;
+  }
+  return true;
 }
 
 export default function AdminPage() {
@@ -238,6 +256,13 @@ export default function AdminPage() {
         throw new Error("Token CSRF indisponível.");
       }
 
+      if (formAdvogado.nome.trim().length < 3 || formAdvogado.oab.trim().length < 3) {
+        throw new Error("Informe um nome e uma OAB válidos.");
+      }
+      if (!editandoAdvogado && !formAdvogado.email.trim()) {
+        throw new Error("Informe o e-mail do advogado.");
+      }
+
       const editando = editandoAdvogado !== null;
 
       const caminho = editando
@@ -327,6 +352,13 @@ export default function AdminPage() {
         throw new Error("Token CSRF indisponível.");
       }
 
+      if (formAssociado.nome.trim().length < 2) {
+        throw new Error("O nome do associado deve conter ao menos 2 caracteres.");
+      }
+      if (formAssociado.cpf.trim() && !cpfValido(formAssociado.cpf)) {
+        throw new Error("CPF inválido. Confira os dígitos informados.");
+      }
+
       const editando = editandoAssociado !== null;
 
       const caminho = editando
@@ -399,14 +431,9 @@ export default function AdminPage() {
     }
   }
 
+  // Mantém inputs HTML acessíveis: o projeto ainda não possui ui/input.tsx.
   const estiloCampo =
-    "w-full rounded-md border border-gray-300 bg-white p-2 text-black";
-
-  const estiloBotao =
-    "rounded-md bg-blue-700 px-4 py-2 text-white disabled:opacity-50";
-
-  const estiloSecundario =
-    "rounded-md border border-gray-400 px-4 py-2 disabled:opacity-50";
+    "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50";
 
   if (carregando) {
     return (
@@ -461,7 +488,7 @@ export default function AdminPage() {
           Administrador: <strong>{perfil.nome}</strong>
         </p>
 
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           Gerenciamento de advogados e associados.
         </p>
       </header>
@@ -469,7 +496,7 @@ export default function AdminPage() {
       {erro && (
         <div
           role="alert"
-          className="rounded-md border border-red-400 p-3 text-red-600"
+          className="rounded-md border border-destructive/50 bg-destructive/5 p-3 text-destructive"
         >
           {erro}
         </div>
@@ -478,16 +505,15 @@ export default function AdminPage() {
       {sucesso && (
         <div
           role="status"
-          className="rounded-md border border-green-400 p-3 text-green-700"
+          className="rounded-md border border-emerald-600/30 bg-emerald-600/5 p-3 text-emerald-700 dark:text-emerald-400"
         >
           {sucesso}
         </div>
       )}
 
-      <section className="space-y-5 rounded-lg border p-5">
-        <h2 className="text-2xl font-semibold">
-          Gerenciamento de advogados
-        </h2>
+      <Card className="gap-5">
+        <CardHeader><CardTitle className="text-2xl">Gerenciamento de advogados</CardTitle></CardHeader>
+        <CardContent className="space-y-5">
 
         <form onSubmit={salvarAdvogado} className="grid gap-3">
           <h3 className="font-semibold">
@@ -496,9 +522,9 @@ export default function AdminPage() {
               : "Cadastrar advogado"}
           </h3>
 
-          <label className="grid gap-1">
-            Nome
-            <input
+          <div className="grid gap-2">
+            <Label htmlFor="adv-nome">Nome</Label>
+            <input id="adv-nome"
               className={estiloCampo}
               required
               minLength={3}
@@ -511,11 +537,11 @@ export default function AdminPage() {
                 })
               }
             />
-          </label>
+          </div>
 
-          <label className="grid gap-1">
-            E-mail
-            <input
+          <div className="grid gap-2">
+            <Label htmlFor="adv-email">E-mail</Label>
+            <input id="adv-email"
               className={estiloCampo}
               type="email"
               required
@@ -529,11 +555,11 @@ export default function AdminPage() {
                 })
               }
             />
-          </label>
+          </div>
 
-          <label className="grid gap-1">
-            OAB
-            <input
+          <div className="grid gap-2">
+            <Label htmlFor="adv-oab">OAB</Label>
+            <input id="adv-oab"
               className={estiloCampo}
               required
               minLength={3}
@@ -546,12 +572,13 @@ export default function AdminPage() {
                 })
               }
             />
-          </label>
+          </div>
 
           {editandoAdvogado && (
-            <label className="flex items-center gap-2">
+            <Label htmlFor="adv-ativo" className="flex items-center gap-2">
               <input
                 type="checkbox"
+                id="adv-ativo"
                 checked={formAdvogado.ativo}
                 onChange={(evento) =>
                   setFormAdvogado({
@@ -561,26 +588,26 @@ export default function AdminPage() {
                 }
               />
               Conta ativa
-            </label>
+            </Label>
           )}
 
           <div className="flex flex-wrap gap-2">
-            <button
-              className={estiloBotao}
+            <Button
+              className="w-fit"
               type="submit"
               disabled={enviando || !csrfToken}
             >
               {editandoAdvogado ? "Salvar alterações" : "Cadastrar"}
-            </button>
+            </Button>
 
             {editandoAdvogado && (
-              <button
+              <Button
                 type="button"
-                className={estiloSecundario}
+                variant="outline"
                 onClick={cancelarEdicaoAdvogado}
               >
                 Cancelar
-              </button>
+              </Button>
             )}
           </div>
         </form>
@@ -596,7 +623,7 @@ export default function AdminPage() {
             {advogados.map((advogado) => (
               <div
                 key={advogado.id}
-                className="space-y-2 rounded-md border p-3"
+                className="space-y-2 rounded-md border bg-muted/20 p-4"
               >
                 <p className="font-semibold">{advogado.nome}</p>
 
@@ -609,43 +636,42 @@ export default function AdminPage() {
                 </p>
 
                 <p className="text-sm">
-                  Situação: {advogado.ativo ? "Ativo" : "Inativo"}
+                  Situação: <Badge variant={advogado.ativo ? "default" : "secondary"}>{advogado.ativo ? "Ativo" : "Inativo"}</Badge>
                 </p>
 
                 <p className="text-sm">
-                  E-mail verificado:{" "}
-                  {advogado.email_verificado ? "Sim" : "Não"}
+                  E-mail verificado: <Badge variant={advogado.email_verificado ? "outline" : "secondary"}>{advogado.email_verificado ? "Sim" : "Não"}</Badge>
                 </p>
 
                 <div className="flex flex-wrap gap-2">
-                  <button
+                  <Button
                     type="button"
-                    className={estiloSecundario}
+                    variant="outline"
                     disabled={enviando}
                     onClick={() => iniciarEdicaoAdvogado(advogado)}
                   >
                     Editar
-                  </button>
+                  </Button>
 
-                  <button
+                  <Button
                     type="button"
-                    className="rounded-md border border-red-500 px-4 py-2 text-red-600 disabled:opacity-50"
+                    variant="destructive"
                     disabled={enviando || !csrfToken}
                     onClick={() => excluirAdvogado(advogado)}
                   >
                     Excluir
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
           </div>
         )}
-      </section>
+        </CardContent>
+      </Card>
 
-      <section className="space-y-5 rounded-lg border p-5">
-        <h2 className="text-2xl font-semibold">
-          Gerenciamento de associados
-        </h2>
+      <Card className="gap-5">
+        <CardHeader><CardTitle className="text-2xl">Gerenciamento de associados</CardTitle></CardHeader>
+        <CardContent className="space-y-5">
 
         <form onSubmit={salvarAssociado} className="grid gap-3">
           <h3 className="font-semibold">
@@ -654,9 +680,9 @@ export default function AdminPage() {
               : "Cadastrar associado"}
           </h3>
 
-          <label className="grid gap-1">
-            Nome
-            <input
+          <div className="grid gap-2">
+            <Label htmlFor="assoc-nome">Nome</Label>
+            <input id="assoc-nome"
               className={estiloCampo}
               required
               minLength={2}
@@ -669,11 +695,11 @@ export default function AdminPage() {
                 })
               }
             />
-          </label>
+          </div>
 
-          <label className="grid gap-1">
-            CPF (opcional)
-            <input
+          <div className="grid gap-2">
+            <Label htmlFor="assoc-cpf">CPF (opcional)</Label>
+            <input id="assoc-cpf"
               className={estiloCampo}
               maxLength={14}
               value={formAssociado.cpf}
@@ -684,11 +710,11 @@ export default function AdminPage() {
                 })
               }
             />
-          </label>
+          </div>
 
-          <label className="grid gap-1">
-            E-mail (opcional)
-            <input
+          <div className="grid gap-2">
+            <Label htmlFor="assoc-email">E-mail (opcional)</Label>
+            <input id="assoc-email"
               className={estiloCampo}
               type="email"
               maxLength={255}
@@ -700,11 +726,11 @@ export default function AdminPage() {
                 })
               }
             />
-          </label>
+          </div>
 
-          <label className="grid gap-1">
-            Telefone (opcional)
-            <input
+          <div className="grid gap-2">
+            <Label htmlFor="assoc-telefone">Telefone (opcional)</Label>
+            <input id="assoc-telefone"
               className={estiloCampo}
               type="tel"
               maxLength={25}
@@ -716,27 +742,27 @@ export default function AdminPage() {
                 })
               }
             />
-          </label>
+          </div>
 
           <div className="flex flex-wrap gap-2">
-            <button
-              className={estiloBotao}
+            <Button
+              className="w-fit"
               type="submit"
               disabled={enviando || !csrfToken}
             >
               {editandoAssociado !== null
                 ? "Salvar alterações"
                 : "Cadastrar"}
-            </button>
+            </Button>
 
             {editandoAssociado !== null && (
-              <button
+              <Button
                 type="button"
-                className={estiloSecundario}
+                variant="outline"
                 onClick={cancelarEdicaoAssociado}
               >
                 Cancelar
-              </button>
+              </Button>
             )}
           </div>
         </form>
@@ -752,7 +778,7 @@ export default function AdminPage() {
             {associados.map((associado) => (
               <div
                 key={associado.id}
-                className="space-y-2 rounded-md border p-3"
+                className="space-y-2 rounded-md border bg-muted/20 p-4"
               >
                 <p className="font-semibold">{associado.nome}</p>
 
@@ -769,29 +795,30 @@ export default function AdminPage() {
                 </p>
 
                 <div className="flex flex-wrap gap-2">
-                  <button
+                  <Button
                     type="button"
-                    className={estiloSecundario}
+                    variant="outline"
                     disabled={enviando}
                     onClick={() => iniciarEdicaoAssociado(associado)}
                   >
                     Editar
-                  </button>
+                  </Button>
 
-                  <button
+                  <Button
                     type="button"
-                    className="rounded-md border border-red-500 px-4 py-2 text-red-600 disabled:opacity-50"
+                    variant="destructive"
                     disabled={enviando || !csrfToken}
                     onClick={() => excluirAssociado(associado)}
                   >
                     Excluir
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
           </div>
         )}
-      </section>
+        </CardContent>
+      </Card>
 
       <footer className="flex flex-wrap gap-4">
         <Link href="/" className="underline">
