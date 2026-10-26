@@ -1,5 +1,6 @@
 "use client";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import {EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 export default function EditorComponent() {
@@ -14,7 +15,13 @@ export default function EditorComponent() {
         },
     });
     if (!editor) {
-        return <div>Carregando editor...</div>;
+          return (
+    <div className="flex w-full max-w-xs flex-col gap-2">
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-3/4" />
+    </div>
+  );
     }
     return <EditorContent editor={editor} />;
 }
