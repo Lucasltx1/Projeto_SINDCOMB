@@ -1,19 +1,40 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { useEffect } from "react";
+
 export default function EditorComponent() {
     const editor = useEditor({
         extensions: [StarterKit],
-        content: "<p>Escreva sua petição aqui...</p>",
-        immediatelyRender: true,
+        content: "",
+        immediatelyRender: false,
         editorProps: {
             attributes: {
                 class: "w-full h-full",
             },
         },
     });
+
+    useEffect(() => {
+      if (!editor) {
+        return;
+      }
+
+      const savedContent = window.localStorage.getItem("editorContent");
+      if (!savedContent) {
+        return;
+      }
+
+      try {
+        editor.commands.setContent(JSON.parse(savedContent));
+      } catch (error) {
+        console.error("Não foi possível carregar o conteúdo salvo do editor.", error);
+      }
+    }, [editor]);
+
     if (!editor) {
           return (
     <div className="flex w-full max-w-xs flex-col gap-2">
@@ -23,5 +44,13 @@ export default function EditorComponent() {
     </div>
   );
     }
-    return <EditorContent editor={editor} />;
+    return (
+      <div>
+      <Button onClick={() => {
+        const content = editor.getJSON();
+        window.localStorage.setItem("editorContent", JSON.stringify(content));
+      }}>Salvar</Button>
+    <EditorContent editor={editor} />
+    </div>
+  );
 }
