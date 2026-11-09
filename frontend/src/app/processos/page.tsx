@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { api } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -51,12 +52,11 @@ export default function ProcessosPage() {
   const [acaoEmAndamento, setAcaoEmAndamento] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState("");
   const [erro, setErro] = useState("");
+  const [numeroTriagem, setNumeroTriagem] = useState("");
 
   useEffect(() => {
     let ativa = true;
     const opcoes: RequestInit = { credentials: "include" };
-    setCarregando(true);
-    setErro("");
     Promise.all([
       fetch(`${API_URL}/api/v1/auth/me`, opcoes),
       fetch(`${API_URL}/api/v1/processos?arquivado=${mostrarArquivados}`, opcoes),
@@ -148,6 +148,26 @@ export default function ProcessosPage() {
     }
   }
 
+  async function solicitarTriagem(evento: React.FormEvent<HTMLFormElement>) {
+    evento.preventDefault();
+    setErro("");
+    setMensagem("");
+    try {
+      const resposta = await api.processos.triagem({ numero: numeroTriagem });
+      setMensagem(resposta.mensagem);
+      setNumeroTriagem("");
+      setProcessos(await api.processos.listar({ arquivado: mostrarArquivados }));
+    } catch (error) {
+      setErro(error instanceof Error ? error.message : "Não foi possível solicitar a triagem.");
+    }
+  }
+
+  function selecionarArquivamento(mostrar: boolean) {
+    setErro("");
+    setCarregando(true);
+    setMostrarArquivados(mostrar);
+  }
+
   return (
     <main className="min-h-screen px-6 py-10 sm:px-10">
       <section className="mx-auto max-w-5xl">
@@ -169,6 +189,13 @@ export default function ProcessosPage() {
                 {sincronizando ? "Sincronizando…" : "Sincronizar agora"}
               </Button>
             )}
+            <Button asChild variant="outline"><Link href="/prazos">Prazos</Link></Button>
+            {perfil?.papel === "advogado" && (
+              <Button asChild variant="outline"><Link href="/peticoes/modelos">Modelos</Link></Button>
+            )}
+            {perfil?.papel === "administrador" && (
+              <Button asChild variant="outline"><Link href="/admin">Administração</Link></Button>
+            )}
             <Button asChild variant="outline"><Link href="/">Início</Link></Button>
           </div>
         </header>
@@ -178,7 +205,7 @@ export default function ProcessosPage() {
             type="button"
             variant={!mostrarArquivados ? "default" : "outline"}
             disabled={sincronizando}
-            onClick={() => setMostrarArquivados(false)}
+            onClick={() => selecionarArquivamento(false)}
           >
             Ativos
           </Button>
@@ -186,11 +213,32 @@ export default function ProcessosPage() {
             type="button"
             variant={mostrarArquivados ? "default" : "outline"}
             disabled={sincronizando}
-            onClick={() => setMostrarArquivados(true)}
+            onClick={() => selecionarArquivamento(true)}
           >
             Arquivados
           </Button>
         </div>
+
+        {perfil?.papel === "advogado" && !mostrarArquivados && (
+          <form
+            className="mt-5 flex flex-wrap items-end gap-3 rounded-lg border p-4"
+            onSubmit={solicitarTriagem}
+          >
+            <label className="grid flex-1 gap-2 text-sm font-medium" htmlFor="numero-triagem">
+              Solicitar acompanhamento de processo pelo número CNJ
+              <input
+                id="numero-triagem"
+                className="h-10 rounded-md border bg-background px-3 font-normal"
+                required
+                maxLength={30}
+                value={numeroTriagem}
+                onChange={(evento) => setNumeroTriagem(evento.target.value)}
+                placeholder="0000000-00.0000.0.00.0000"
+              />
+            </label>
+            <Button type="submit" disabled={!csrfToken}>Solicitar triagem</Button>
+          </form>
+        )}
 
         {mensagem && <p role="status" className="mt-4 text-sm">{mensagem}</p>}
         {erro && (

@@ -153,6 +153,13 @@ export default function LoginPage() {
                 </p>
                 <p className="text-sm text-muted-foreground">Sua sessão fica ativa nesta aba.</p>
                 <Button asChild><Link href="/processos">Abrir processos</Link></Button>
+                <Button asChild variant="outline"><Link href="/prazos">Ver prazos</Link></Button>
+                {perfil.papel === "advogado" && (
+                  <Button asChild variant="outline"><Link href="/peticoes/modelos">Modelos de petição</Link></Button>
+                )}
+                {perfil.papel === "administrador" && (
+                  <Button asChild variant="outline"><Link href="/admin">Administração</Link></Button>
+                )}
                 <Button type="button" variant="outline" disabled={carregando} onClick={sair}>
                   Encerrar sessão
                 </Button>

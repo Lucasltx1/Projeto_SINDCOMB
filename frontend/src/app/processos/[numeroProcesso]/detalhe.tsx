@@ -45,15 +45,16 @@ export default function ProcessoDetalhe({processoId}: {processoId: string}) {
 
   useEffect(() => {
     let ativo = true;
-    setCarregando(true);
-    setErro("");
     fetch(`${API_URL}/api/v1/processos/${encodeURIComponent(processoId)}`, {
       credentials: "include",
     })
       .then(async (resposta) => {
         const dados = await resposta.json();
         if (!resposta.ok) throw new Error(dados.detail ?? "Não foi possível carregar o processo.");
-        if (ativo) setProcesso(dados);
+        if (ativo) {
+          setErro("");
+          setProcesso(dados);
+        }
       })
       .catch((error: unknown) => {
         if (ativo) setErro(error instanceof Error ? error.message : "Falha de conexão com a API.");
@@ -79,7 +80,12 @@ export default function ProcessoDetalhe({processoId}: {processoId: string}) {
               </p>
             )}
           </div>
-          <Button asChild variant="outline"><Link href="/processos">Voltar aos processos</Link></Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline">
+              <Link href={`/processos/${encodeURIComponent(processoId)}/gestao`}>Gestão do processo</Link>
+            </Button>
+            <Button asChild variant="outline"><Link href="/processos">Voltar aos processos</Link></Button>
+          </div>
         </header>
 
         {carregando && <p role="status" className="text-sm text-muted-foreground">Carregando processo…</p>}

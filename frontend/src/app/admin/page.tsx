@@ -715,7 +715,6 @@ export default function AdminPage() {
           <div className="grid gap-2">
             <Label htmlFor="assoc-telefone">Telefone (opcional)</Label>
             <Input id="assoc-telefone"
-              className={estiloCampo}
               type="tel"
               maxLength={25}
               value={formAssociado.telefone}

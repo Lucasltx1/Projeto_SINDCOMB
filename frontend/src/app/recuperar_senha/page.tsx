@@ -1,18 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { api } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-export default function RecuperarSenhaPage() {
+function RecuperarSenhaFormulario() {
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [mensagem, setMensagem] = useState("");
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(false);
+  const primeiroAcesso = searchParams.get("primeiro_acesso") === "1";
 
   async function enviarSolicitacao(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
@@ -21,15 +23,7 @@ export default function RecuperarSenhaPage() {
     setCarregando(true);
 
     try {
-      const resposta = await fetch(`${API_URL}/api/v1/auth/solicitar-recuperacao-senha`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const dados = await resposta.json();
-      if (!resposta.ok) {
-        throw new Error(dados.detail ?? "Não foi possível processar a solicitação.");
-      }
+      const dados = await api.auth.solicitarRecuperacao(email);
       setMensagem(dados.mensagem);
     } catch (error) {
       setErro(error instanceof Error ? error.message : "Falha de conexão com o sistema.");
@@ -42,8 +36,11 @@ export default function RecuperarSenhaPage() {
     <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-10">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>Recuperar senha</CardTitle>
+          <CardTitle>{primeiroAcesso ? "Primeiro acesso" : "Recuperar senha"}</CardTitle>
           <CardDescription>
+            {primeiroAcesso
+              ? "Use o e-mail cadastrado pelo administrador. Confirme seu endereço e depois solicite o link para definir sua senha pessoal. "
+              : ""}
             Informe o e-mail da sua conta. Se ela estiver ativa e confirmada, enviaremos um link de redefinição.
           </CardDescription>
         </CardHeader>
@@ -75,5 +72,13 @@ export default function RecuperarSenhaPage() {
         </CardContent>
       </Card>
     </main>
+  );
+}
+
+export default function RecuperarSenhaPage() {
+  return (
+    <Suspense fallback={<p role="status" className="p-6 text-center">Carregando…</p>}>
+      <RecuperarSenhaFormulario />
+    </Suspense>
   );
 }

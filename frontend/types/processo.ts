@@ -30,5 +30,5 @@ export interface Movimentacao {
 export interface Prazo {
     prazo: Date;
     numeroProcesso: string;
-    tipo: "Audiência" | "Despacho" | "Decisão" | "Sentença" | "Recurso" | "Outros";
+    tipo: string;
 }
