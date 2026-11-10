@@ -1,35 +1,29 @@
-# Projeto SINDCOMB
+# SINDCOMB — Sistema de Acompanhamento Processual
 
-Sistema de Acompanhamento Processual do SINDCOMB, voltado para gestão operacional de processos, prazos, documentos, petições, notificações e acompanhamento jurídico/administrativo.
+Sistema para apoiar as equipes administrativa e jurídica do SINDCOMB no acompanhamento de processos, prazos, documentos, petições e notificações.
 
-O projeto é composto por:
-- Frontend em Next.js
-- Backend em FastAPI
-- Banco PostgreSQL
-- Cache/limite de requisições com Redis
-- Containerização com Docker Compose
-- Integração opcional com modelo de IA (Qwen via vLLM)
+O repositório contém uma aplicação web, uma API e serviços de infraestrutura executados com Docker Compose.
 
-## Visão geral
+## Funcionalidades
 
-A aplicação permite:
-- cadastrar e acompanhar processos
-- visualizar prazos e alertas
-- gerenciar documentos e petições
-- registrar comentários e discussões por processo
-- controlar autenticação e autorização
-- sincronizar dados em background
-- enviar notificações e e-mails
-- consultar documentação técnica em `/docs` (API) e na pasta `docs/`
+- Acompanhamento de processos.
+- Gerenciamento de prazos, documentos e petições.
+- Comentários compartilhados por processo.
+- Autenticação e administração de usuários.
+- Notificações e envio de e-mails.
+- Tarefas em segundo plano para sincronizações e processamento de e-mails.
+- Integração opcional com um modelo de linguagem local via vLLM.
 
-## Stack principal
+## Tecnologias
 
-- Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS
-- Backend: FastAPI, SQLAlchemy, Pydantic
-- Banco: PostgreSQL 17
-- Cache: Redis 7
-- Infra: Docker Compose
-- IA (opcional): Qwen via vLLM
+| Componente | Tecnologias |
+| --- | --- |
+| Frontend | Next.js 16, React 19, TypeScript |
+| Backend | Python 3.11+, FastAPI, SQLAlchemy, Pydantic |
+| Banco de dados | PostgreSQL 17 |
+| Cache e suporte a rate limiting | Redis 7 |
+| Execução e serviços | Docker Compose |
+| Modelo de linguagem opcional | Qwen via vLLM |
 
 ## Estrutura do repositório
 
@@ -37,122 +31,145 @@ A aplicação permite:
 .
 ├── backend/
 │   ├── app/
-│   │   ├── modulos/
-│   │   ├── nucleo/
+│   │   ├── modulos/       # Módulos da API
+│   │   ├── nucleo/        # Infraestrutura compartilhada
 │   │   ├── background_worker.py
-│   │   └── main.py
-│   ├── database/
+│   │   └── main.py        # Aplicação FastAPI
+│   ├── database/          # Esquema e documentação do banco
+│   ├── tests/             # Testes do backend
 │   ├── Dockerfile
-│   ├── pyproject.toml
-│   └── tests/
+│   └── pyproject.toml
+├── docs/                  # Documentação técnica e funcional
 ├── frontend/
 │   ├── src/
 │   ├── public/
-│   ├── package.json
-│   ├── README.md
-│   └── Dockerfile
-├── docs/
-│   ├── auditoria-recuperacao-senha.md
-│   ├── monitoramento-processos.md
-│   └── seguranca-backend.md
+│   ├── Dockerfile
+│   └── package.json
 ├── .env.example
 ├── docker-compose.yml
-├── README.md
-├── LICENSE
-└── .gitignore
+└── README.md
 ```
 
-## Requisitos
+## Pré-requisitos
 
-- Docker
-- Docker Compose
-- Node.js e Yarn (para desenvolvimento local do frontend)
-- Python 3.11+ e uv (opcional, para desenvolvimento do backend)
-- Variáveis de ambiente configuradas
+Para executar a aplicação completa:
 
-## Configuração inicial
+- Docker Engine ou Docker Desktop com Docker Compose.
+- Git.
 
-1. Clone o repositório:
+Para desenvolvimento local sem Docker, também serão necessários:
+
+- Python 3.11 ou superior e `uv` para o backend.
+- Node.js e Yarn 4 para o frontend.
+- PostgreSQL e Redis acessíveis pelo ambiente local.
+
+## Configuração com Docker Compose
+
+### 1. Clonar o repositório
 
 ```bash
 git clone https://github.com/Lucasltx1/Projeto_SINDCOMB.git
 cd Projeto_SINDCOMB
 ```
 
-2. Crie o arquivo de ambiente a partir do exemplo:
+### 2. Criar e configurar o arquivo de ambiente
+
+Crie `.env` a partir do exemplo incluído:
 
 ```bash
 cp .env.example .env
 ```
 
-3. Ajuste as variáveis obrigatórias no arquivo `.env`, especialmente:
+No Windows PowerShell, use:
 
-```env
-SINDCOMB_ENVIRONMENT=development
-SINDCOMB_AUTH_SECRET=chave-secreta-muito-segura
-SINDCOMB_EMAIL_ENCRYPTION_KEY=chave-fernet
-POSTGRES_PASSWORD=senhaboa
-SINDCOMB_ML_API_KEY=chave-opcional-para-ml
+```powershell
+Copy-Item .env.example .env
 ```
 
-> O projeto usa valores padrões em alguns casos, mas as variáveis mais sensíveis precisam ser definidas antes de subir os containers.
+Revise o `.env.example` e preencha os valores necessários. O Compose exige, entre outros, valores para:
 
-## Executando com Docker
+- `SINDCOMB_ENVIRONMENT`
+- `SINDCOMB_AUTH_SECRET`
+- `SINDCOMB_EMAIL_ENCRYPTION_KEY`
+- `POSTGRES_PASSWORD`
+- `SINDCOMB_ML_API_KEY`
 
-Na raiz do projeto:
+Configure também as variáveis de SMTP se o ambiente precisar enviar e-mails. Não use valores de exemplo, senhas fracas ou chaves compartilhadas em produção. Não versione o arquivo `.env`.
+
+### 3. Iniciar a aplicação
+
+Na raiz do repositório:
 
 ```bash
 docker compose up --build
 ```
 
-Isso iniciará:
-- frontend em `http://localhost:3000`
-- backend em `http://localhost:8000`
-- PostgreSQL em rede interna do Compose
-- Redis em rede interna do Compose
+Para iniciar os serviços em segundo plano:
 
-Para validar a API:
+```bash
+docker compose up --build -d
+```
+
+O Compose inicia o frontend, o backend, o PostgreSQL e o Redis. O PostgreSQL e o Redis ficam em redes internas do Compose; suas portas não são publicadas no host.
+
+Acesse:
+
+- Aplicação web: <http://localhost:3000>
+- API: <http://localhost:8000>
+- Swagger da API: <http://localhost:8000/docs>
+- ReDoc da API: <http://localhost:8000/redoc>
+
+A documentação interativa da API fica desativada quando `SINDCOMB_ENVIRONMENT=production`.
+
+### 4. Verificar o estado da API
 
 ```bash
 curl http://localhost:8000/health
 curl http://localhost:8000/ready
 ```
 
-Documentação da API:
-- Swagger: `http://localhost:8000/docs`
-- Redoc: `http://localhost:8000/redoc`
+`/health` verifica a disponibilidade da API. `/ready` também verifica as dependências PostgreSQL e Redis.
 
-## Executando o backend localmente
-
-Entre na pasta `backend` e instale as dependências:
+### 5. Encerrar
 
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r <(python - <<'PY'
-import tomllib
-with open('pyproject.toml', 'rb') as f:
-    data = tomllib.load(f)
-print('\n'.join(data['project']['dependencies']))
-PY
-)
+docker compose down
 ```
 
-Ou, usando uv:
+Para remover também os volumes persistentes — incluindo dados do banco e arquivos enviados — use o comando abaixo **somente se tiver certeza de que deseja apagar esses dados**:
+
+```bash
+docker compose down --volumes
+```
+
+## Testes do backend
+
+O Compose define um serviço de testes com perfil `tests`. Para executá-lo:
+
+```bash
+docker compose --profile tests run --rm backend-tests
+```
+
+## Desenvolvimento local
+
+### Backend
+
+O caminho recomendado para instalar as dependências é usar `uv` e o arquivo de lock:
 
 ```bash
 cd backend
 uv sync
 ```
 
-Depois execute:
+Configure as variáveis necessárias para o ambiente local e inicie a API:
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## Executando o frontend localmente
+A API local estará disponível em <http://localhost:8000>. O backend precisa conseguir acessar PostgreSQL e Redis; configure as URLs de conexão de acordo com os serviços disponíveis no seu ambiente.
+
+### Frontend
 
 ```bash
 cd frontend
@@ -160,73 +177,57 @@ yarn install
 yarn dev
 ```
 
-A aplicação será servida em:
-- `http://localhost:3000`
-
-## IA / modelo de ML (opcional)
-
-O ambiente Docker inclui um serviço `qwen-ml` com perfil `ml` para permitir integração com um modelo de linguagem. Para subir esse serviço:
+A aplicação de desenvolvimento estará disponível em <http://localhost:3000>. Para validar os tipos:
 
 ```bash
-docker compose --profile ml up -d qwen-ml
+yarn typecheck
 ```
 
-A configuração do backend usa:
+Outros scripts disponíveis em `frontend/package.json`:
 
-```env
-SINDCOMB_ML_BASE_URL=http://qwen-ml:8000/v1
-SINDCOMB_ML_API_KEY=...
-SINDCOMB_ML_MODEL=sindcomb-qwen
+```bash
+yarn build
+yarn start
 ```
+
+## Modelo de linguagem opcional
+
+O Compose disponibiliza o serviço `qwen-ml` no perfil `ml`. Essa configuração requer suporte a GPU NVIDIA e os recursos necessários para executar o modelo.
+
+Para iniciar o serviço junto com os serviços padrão do projeto:
+
+```bash
+docker compose --profile ml up --build
+```
+
+O backend usa o endereço interno `http://qwen-ml:8000/v1` e o nome de modelo `sindcomb-qwen`, conforme configurado no Compose. Defina `SINDCOMB_ML_API_KEY` no `.env`.
+
+## Banco de dados
+
+O esquema inicial está em `backend/database/001_postgresql_schema.sql`. Em uma instalação nova, o Compose o executa automaticamente quando o volume de dados do PostgreSQL é criado pela primeira vez.
+
+Se já existir um volume de banco, os scripts de inicialização do PostgreSQL não são reaplicados automaticamente. Consulte [`backend/database/README.md`](backend/database/README.md) antes de aplicar ou atualizar o esquema. Faça backup dos dados antes de qualquer operação de migração.
 
 ## Documentação adicional
 
-- `docs/monitoramento-processos.md` — monitoramento e processos
-- `docs/seguranca-backend.md` — segurança e boas práticas do backend
-- `docs/auditoria-recuperacao-senha.md` — auditoria e recuperação de senha
-- `backend/database/README.md` — esquema do PostgreSQL e procedimentos de bootstrap
+- [`docs/monitoramento-processos.md`](docs/monitoramento-processos.md) — documentação de monitoramento de processos.
+- [`docs/seguranca-backend.md`](docs/seguranca-backend.md) — configuração e recomendações de segurança do backend.
+- [`docs/auditoria-recuperacao-senha.md`](docs/auditoria-recuperacao-senha.md) — auditoria e recuperação de senha.
+- [`backend/database/README.md`](backend/database/README.md) — esquema e procedimentos do banco de dados.
 
-## Variáveis principais de ambiente
+## Segurança e produção
 
-Algumas variáveis importantes no Compose:
+Antes de disponibilizar o sistema em produção:
 
-```env
-SINDCOMB_ENVIRONMENT
-SINDCOMB_AUTH_SECRET
-SINDCOMB_EMAIL_ENCRYPTION_KEY
-SINDCOMB_CORS_ORIGINS
-SINDCOMB_PUBLIC_API_URL
-SINDCOMB_PUBLIC_APP_URL
-SINDCOMB_BOOTSTRAP_ADMIN_PASSWORD
-POSTGRES_PASSWORD
-DATABASE_URL
-REDIS_URL
-SINDCOMB_ML_API_KEY
-SINDCOMB_ML_BASE_URL
-SINDCOMB_ML_MODEL
-SMTP_HOST
-SMTP_PORT
-SMTP_USERNAME
-SMTP_PASSWORD
-SMTP_FROM
-```
-
-## Observações
-
-- O backend utiliza PostgreSQL e Redis em rede interna do Compose.
-- A API expõe endpoints protegidos e mecanismos de rate limiting.
-- Para produção, ajuste corretamente `SINDCOMB_ENVIRONMENT`, CORS, chaves secretas e URLs públicas.
-- A pasta `docs/` concentra decisões de negócio, segurança e monitoramento da solução.
+- Use segredos fortes, únicos e armazenados fora do repositório.
+- Defina `SINDCOMB_ENVIRONMENT=production`.
+- Configure `SINDCOMB_CORS_ORIGINS` com as origens autorizadas, em vez de manter origens de desenvolvimento.
+- Configure corretamente as URLs públicas da API e da aplicação.
+- Configure SMTP se o envio de e-mails for necessário.
+- Use HTTPS e revise as configurações de proxy, rede, backups e persistência.
+- Não publique portas ou serviços internos sem uma necessidade explícita.
+- Consulte [`docs/seguranca-backend.md`](docs/seguranca-backend.md) para orientações adicionais.
 
 ## Licença
 
-Este projeto está sob a licença definida no arquivo `LICENSE`.
-
-## Contribuição
-
-Contribuições são bem-vindas. Para alterações, recomenda-se:
-1. criar branch de trabalho
-2. validar a aplicação localmente
-3. subir alterações com testes/documentação relevantes
-
-Se quiser, posso também montar uma versão mais "premium" do README com badges, arquitetura em ASCII, roadmap e instruções de deploy em produção.
+Consulte o arquivo [`LICENSE`](LICENSE) para informações sobre a licença do projeto.
