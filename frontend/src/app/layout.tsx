@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LimparTokenLegado } from "@/components/security/limpar-token-legado";
+import { AppShell } from "@/components/navigation/app-shell";
 
 export const metadata: Metadata = {
   title: "SINDCOMB | Acompanhamento Processual",
@@ -15,7 +16,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
       <TooltipProvider>
       <body>
         <LimparTokenLegado />
-        {children}
+        <AppShell>{children}</AppShell>
       </body>
       </TooltipProvider>
     </html>

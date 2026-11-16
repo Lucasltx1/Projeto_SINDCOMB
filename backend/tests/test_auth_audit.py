@@ -6,7 +6,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 import unittest
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from cryptography.fernet import Fernet
 from sqlalchemy import BigInteger, create_engine, select
@@ -35,7 +35,11 @@ from app.modulos.processos.models import (
     TokenVerificacaoDB,
     UsuarioDB,
 )
-from app.modulos.processos.schemas import LoginEntrada, SolicitarRecuperacaoSenhaEntrada
+from app.modulos.processos.schemas import (
+    AlteracaoSenhaEntrada,
+    LoginEntrada,
+    SolicitarRecuperacaoSenhaEntrada,
+)
 from app.modulos.processos.security import hash_password, verificar_password
 
 
@@ -213,6 +217,82 @@ class TestAuditoriaERecuperacaoSenha(unittest.TestCase):
             self.sessao.scalar(select(EmailOutboxDB).where(EmailOutboxDB.categoria == "recuperacao_senha")),
             None,
         )
+
+    def test_administrador_define_senha_no_primeiro_acesso_apenas_uma_vez(self):
+        admin = UsuarioDB(
+            id_usuario=2,
+            nome="Administrador",
+            username="adm_sindcomb",
+            email=None,
+            senha=hash_password("SenhaBootstrapAdmin!2026"),
+            primeiro_acesso=True,
+            ativo=True,
+            email_verificado=False,
+        )
+        self.sessao.add(admin)
+        self.sessao.flush()
+        self.sessao.add(AdministradorDB(id_usuario=admin.id_usuario))
+        self.sessao.commit()
+        usuario_atual = UsuarioAtual(
+            id=str(admin.id_usuario),
+            nome=admin.nome,
+            username=admin.username,
+            email=None,
+            papel="administrador",
+            primeiro_acesso=True,
+        )
+        nova_senha = "SenhaPessoalAdminSegura!2026"
+
+        with patch.dict("os.environ", {"SINDCOMB_AUTH_SECRET": "x" * 40}):
+            resposta = auth_routes.alterar_senha(
+                AlteracaoSenhaEntrada(
+                    senha_atual="SenhaBootstrapAdmin!2026",
+                    nova_senha=nova_senha,
+                ),
+                usuario_atual,
+                self.sessao,
+                Response(),
+            )
+
+        self.assertFalse(resposta.alterar_senha_no_primeiro_acesso)
+        self.assertTrue(verificar_password(nova_senha, admin.senha))
+        self.assertFalse(admin.primeiro_acesso)
+        self.assertEqual(admin.token_version, 1)
+
+        usuario_atual.primeiro_acesso = False
+        with self.assertRaises(HTTPException) as erro:
+            auth_routes.alterar_senha(
+                AlteracaoSenhaEntrada(
+                    senha_atual=nova_senha,
+                    nova_senha="OutraSenhaAdminSegura!2026",
+                ),
+                usuario_atual,
+                self.sessao,
+                Response(),
+            )
+
+        self.assertEqual(erro.exception.status_code, 403)
+
+    def test_bootstrap_de_producao_exige_definir_senha_no_primeiro_acesso(self):
+        from app.nucleo import database
+
+        with (
+            patch.object(database, "SessionLocal", self.Session),
+            patch.dict(
+                "os.environ",
+                {
+                    "SINDCOMB_ENVIRONMENT": "production",
+                    "SINDCOMB_BOOTSTRAP_ADMIN_PASSWORD": "SenhaBootstrapAdmin!2026",
+                },
+            ),
+        ):
+            database._criar_administrador_inicial()
+
+        admin = self.sessao.scalar(
+            select(UsuarioDB).where(UsuarioDB.username == "adm_sindcomb")
+        )
+        self.assertIsNotNone(admin)
+        self.assertTrue(admin.primeiro_acesso)
 
     def test_token_expirado_nao_altera_a_senha(self):
         token = "token-de-testes-suficientemente-grande-para-validar"

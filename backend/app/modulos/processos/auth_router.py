@@ -319,7 +319,10 @@ def alterar_senha(
     response: Response = None,  # type: ignore[assignment]
 ) -> LoginSaida:
     usuario = sessao.get(UsuarioDB, int(usuario_atual.id))
-    if usuario is not None and sessao.get(AdministradorDB, usuario.id_usuario) is not None:
+    eh_administrador = (
+        usuario is not None and sessao.get(AdministradorDB, usuario.id_usuario) is not None
+    )
+    if usuario is not None and eh_administrador and not usuario.primeiro_acesso:
         registrar_evento(
             sessao,
             usuario_id=usuario.id_usuario,

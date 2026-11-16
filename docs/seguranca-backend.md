@@ -15,7 +15,7 @@
    python -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
    ```
 
-4. Configure `SINDCOMB_BOOTSTRAP_ADMIN_PASSWORD` com uma senha aleatória de pelo menos 16 caracteres antes do primeiro bootstrap. A conta `adm_sindcomb` não pode redefini-la pela API.
+4. Configure `SINDCOMB_BOOTSTRAP_ADMIN_PASSWORD` com uma senha temporária aleatória de 16 a 128 caracteres antes do primeiro bootstrap. Em produção, no primeiro login de `adm_sindcomb`, a aplicação exige que o administrador defina sua senha pessoal (mínimo de 12 caracteres). A senha temporária só funciona nessa etapa; depois, a conta não pode trocar a senha pela API.
 5. Confira o Compose sem iniciar containers:
 
    ```powershell
@@ -28,7 +28,7 @@
    docker compose --env-file .env up --build
    ```
 
-O `.env.example` contém marcadores inválidos para autenticação; o backend recusa iniciar enquanto eles não forem substituídos. Uma inicialização existente mantém a senha já persistida do administrador. Antes de usar `SINDCOMB_ENVIRONMENT=production`, troque diretamente no PostgreSQL uma senha administrativa de desenvolvimento que ainda esteja ativa. A API bloqueia esse caso na inicialização de produção.
+O `.env.example` contém marcadores inválidos para autenticação; o backend recusa iniciar enquanto eles não forem substituídos. O bootstrap usa `SINDCOMB_BOOTSTRAP_ADMIN_PASSWORD` apenas para provisionar a conta em banco novo; em produção, essa senha é temporária e a troca por uma senha pessoal é obrigatória no primeiro login. Após concluir o primeiro acesso, remova o segredo temporário do ambiente de implantação. Bancos já inicializados mantêm a senha persistida e não recebem uma redefinição automática ao alterar o `.env`. Antes de usar `SINDCOMB_ENVIRONMENT=production`, troque diretamente no PostgreSQL uma senha administrativa de desenvolvimento que ainda esteja ativa. A API bloqueia esse caso na inicialização de produção.
 
 ## Produção
 

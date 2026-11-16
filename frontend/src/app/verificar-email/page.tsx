@@ -9,7 +9,7 @@ import { api } from "@/lib/api";
 
 function VerificarEmailResultado() {
   const searchParams = useSearchParams();
-  const token = searchParams.get("token");
+  const token = searchParams.get("token") ?? "";
   const [mensagem, setMensagem] = useState("");
   const [erro, setErro] = useState("");
 
@@ -18,7 +18,7 @@ function VerificarEmailResultado() {
 
     window.history.replaceState(null, "", window.location.pathname);
     void api.auth.verificarEmail(token)
-      .then((resultado) => setMensagem(resultado.mensagem))
+      .then((resultado) => setMensagem(resultado.mensagem ?? "E-mail verificado."))
       .catch((error: unknown) => {
         setErro(error instanceof Error ? error.message : "Não foi possível verificar o e-mail.");
       });

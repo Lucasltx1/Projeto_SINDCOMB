@@ -24,7 +24,7 @@ function RecuperarSenhaFormulario() {
 
     try {
       const dados = await api.auth.solicitarRecuperacao(email);
-      setMensagem(dados.mensagem);
+      setMensagem(dados.mensagem ?? "Instruções enviadas.");
     } catch (error) {
       setErro(error instanceof Error ? error.message : "Falha de conexão com o sistema.");
     } finally {

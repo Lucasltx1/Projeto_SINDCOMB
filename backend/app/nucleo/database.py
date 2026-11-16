@@ -145,7 +145,8 @@ def _criar_administrador_inicial() -> None:
             username=ADMINISTRADOR_USERNAME,
             email=None,
             senha=hash_password(senha),
-            primeiro_acesso=False,
+            primeiro_acesso=os.getenv("SINDCOMB_ENVIRONMENT", "development").strip().casefold()
+            == "production",
             ativo=True,
             email_verificado=False,
         )
