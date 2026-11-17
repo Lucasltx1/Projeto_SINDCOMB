@@ -1,0 +1,252 @@
+-- SINDCOMB / ADP2 | 02 - 3 FUNCTIONS, 3 PROCEDURES, 3 TRIGGERS
+-- Usa os nomes/campos reais das 16 tabelas do Supabase fornecidas.
+-- Execute no SQL Editor como dono. Pode ser repetido (CREATE OR REPLACE).
+-- A politica de acesso usa Supabase Auth (auth.uid), nao login_bd.
+-- Os usuarios ficticios @example.invalid NAO sao contas Supabase Auth.
+BEGIN;
+
+-- Helper de seguranca A: identifica usuario de public.usuario a partir
+-- do email CONFIRMADO do usuario de auth.users. Nao retorna senha.
+-- SECURITY DEFINER executa com direitos do dono; sempre schema qualificado.
+CREATE OR REPLACE FUNCTION public.sindcomb_usuario_auth_id()
+RETURNS BIGINT LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = ''
+AS $func$
+  SELECT u.id_usuario
+  FROM public.usuario AS u
+  JOIN auth.users AS au ON au.email = u.email
+  WHERE au.id = auth.uid()
+    AND au.email_confirmed_at IS NOT NULL
+    AND u.ativo IS TRUE
+  LIMIT 1;
+$func$;
+
+-- Helper de seguranca B: verdadeiro apenas se o processo foi atribuido
+-- ao usuario autenticado e o nivel de acesso e adequado.
+CREATE OR REPLACE FUNCTION public.sindcomb_tem_acesso(
+    p_id_processo BIGINT, p_niveis VARCHAR[]
+)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = ''
+AS $func$
+  SELECT EXISTS (
+    SELECT 1 FROM public.permissao_processo AS pp
+    WHERE pp.id_usuario = public.sindcomb_usuario_auth_id()
+      AND pp.id_processo = p_id_processo
+      AND pp.nivel_acesso = ANY(p_niveis)
+  );
+$func$;
+
+-- FUNCTIONS da ADP2 (tres funcoes de negocio).
+-- F1: conta processos ativos. Em sessoes autenticadas, RLS limita a contagem.
+CREATE OR REPLACE FUNCTION public.contar_processos_ativos()
+RETURNS BIGINT LANGUAGE sql STABLE SECURITY INVOKER
+SET search_path = ''
+AS $func$
+  SELECT COUNT(*) FROM public.processo
+  WHERE status = 'ativo' AND arquivado IS FALSE;
+$func$;
+
+-- F2: conta prazos pendentes em determinado processo (RLS em sessoes Auth).
+CREATE OR REPLACE FUNCTION public.contar_prazos_pendentes(p_id_processo BIGINT)
+RETURNS BIGINT LANGUAGE sql STABLE SECURITY INVOKER
+SET search_path = ''
+AS $func$
+  SELECT COUNT(*) FROM public.prazo
+  WHERE id_processo = p_id_processo AND status = 'pendente';
+$func$;
+
+-- F3: consulta nivel de acesso, vedando consultar perfil de outra pessoa
+-- quando chamado por um usuario autenticado. SQL Editor (postgres) pode auditar.
+CREATE OR REPLACE FUNCTION public.consultar_nivel_acesso(
+    p_id_usuario BIGINT, p_id_processo BIGINT
+)
+RETURNS VARCHAR(30) LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = ''
+AS $func$
+DECLARE
+  v_usuario BIGINT;
+BEGIN
+  v_usuario := public.sindcomb_usuario_auth_id();
+  IF auth.uid() IS NOT NULL THEN
+    IF v_usuario IS NULL OR v_usuario <> p_id_usuario THEN
+      RAISE EXCEPTION 'Acesso negado: somente suas permissoes podem ser consultadas'
+        USING ERRCODE = '42501';
+    END IF;
+  ELSIF SESSION_USER NOT IN ('postgres', 'supabase_admin') THEN
+    RAISE EXCEPTION 'Acesso negado: sessao nao autenticada' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN (
+    SELECT pp.nivel_acesso::VARCHAR(30)
+    FROM public.permissao_processo AS pp
+    WHERE pp.id_usuario = p_id_usuario AND pp.id_processo = p_id_processo
+    ORDER BY pp.data_concessao DESC, pp.id_permissao DESC LIMIT 1
+  );
+END;
+$func$;
+
+-- PROCEDURE P1: arquivar somente processo encerrado e com acesso TOTAL.
+-- SQL Editor privilegiado pode realizar o teste mesmo sem Supabase Auth.
+CREATE OR REPLACE PROCEDURE public.arquivar_processo(p_id_processo BIGINT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $proc$
+DECLARE
+  v_status VARCHAR;
+  v_arquivado BOOLEAN;
+BEGIN
+  IF auth.uid() IS NOT NULL THEN
+    IF NOT public.sindcomb_tem_acesso(p_id_processo, ARRAY['total']::VARCHAR[]) THEN
+      RAISE EXCEPTION 'Sem acesso total ao processo %', p_id_processo USING ERRCODE = '42501';
+    END IF;
+  ELSIF SESSION_USER NOT IN ('postgres','supabase_admin') THEN
+    RAISE EXCEPTION 'Acesso negado: sessao nao autenticada' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT p.status, p.arquivado INTO v_status, v_arquivado
+  FROM public.processo AS p WHERE p.id_processo = p_id_processo FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Processo % nao encontrado', p_id_processo;
+  END IF;
+  IF v_arquivado THEN RETURN; END IF;
+  IF v_status <> 'encerrado' THEN
+    RAISE EXCEPTION 'Somente processos encerrados podem ser arquivados';
+  END IF;
+  UPDATE public.processo SET arquivado = TRUE WHERE id_processo = p_id_processo;
+END;
+$proc$;
+
+-- PROCEDURE P2: concluir apenas prazo PENDENTE de processo editavel.
+CREATE OR REPLACE PROCEDURE public.concluir_prazo(p_id_prazo BIGINT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $proc$
+DECLARE
+  v_processo BIGINT;
+  v_status VARCHAR;
+BEGIN
+  SELECT pr.id_processo, pr.status INTO v_processo, v_status
+  FROM public.prazo AS pr WHERE pr.id_prazo = p_id_prazo FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Prazo % nao encontrado', p_id_prazo; END IF;
+
+  IF auth.uid() IS NOT NULL THEN
+    IF NOT public.sindcomb_tem_acesso(v_processo, ARRAY['edicao','total']::VARCHAR[]) THEN
+      RAISE EXCEPTION 'Sem permissao para concluir prazo do processo %', v_processo
+        USING ERRCODE = '42501';
+    END IF;
+  ELSIF SESSION_USER NOT IN ('postgres','supabase_admin') THEN
+    RAISE EXCEPTION 'Acesso negado: sessao nao autenticada' USING ERRCODE = '42501';
+  END IF;
+
+  IF v_status <> 'pendente' THEN
+    RAISE EXCEPTION 'Somente prazos pendentes podem ser concluidos';
+  END IF;
+  UPDATE public.prazo SET status = 'concluido' WHERE id_prazo = p_id_prazo;
+END;
+$proc$;
+
+-- PROCEDURE P3: movimentacao manual de processo nao arquivado.
+CREATE OR REPLACE PROCEDURE public.registrar_movimentacao(
+   p_id_processo BIGINT,
+   p_descricao TEXT,
+   p_tipo_evento VARCHAR,
+   p_id_usuario BIGINT DEFAULT NULL,
+   p_origem VARCHAR DEFAULT 'manual'
+)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $proc$
+DECLARE
+  v_arquivado BOOLEAN;
+  v_id_usuario BIGINT;
+BEGIN
+  IF auth.uid() IS NOT NULL THEN
+    IF NOT public.sindcomb_tem_acesso(p_id_processo, ARRAY['edicao','total']::VARCHAR[]) THEN
+      RAISE EXCEPTION 'Sem permissao para movimentar processo %', p_id_processo
+        USING ERRCODE = '42501';
+    END IF;
+    v_id_usuario := public.sindcomb_usuario_auth_id();
+    IF p_id_usuario IS NOT NULL AND p_id_usuario <> v_id_usuario THEN
+      RAISE EXCEPTION 'Nao e permitido registrar evento em nome de outro usuario'
+        USING ERRCODE = '42501';
+    END IF;
+    IF p_origem <> 'manual' THEN
+      RAISE EXCEPTION 'Usuario autenticado so pode registrar origem manual'
+        USING ERRCODE = '42501';
+    END IF;
+  ELSIF SESSION_USER IN ('postgres','supabase_admin') THEN
+    v_id_usuario := p_id_usuario;
+  ELSE
+    RAISE EXCEPTION 'Acesso negado: sessao nao autenticada' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT p.arquivado INTO v_arquivado
+  FROM public.processo AS p WHERE p.id_processo = p_id_processo;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Processo % nao encontrado', p_id_processo; END IF;
+  IF v_arquivado IS TRUE THEN
+    RAISE EXCEPTION 'Processo arquivado nao aceita movimentacao';
+  END IF;
+
+  INSERT INTO public.linha_tempo
+      (id_processo, id_usuario, descricao, tipo_evento, origem)
+  VALUES (p_id_processo, v_id_usuario, p_descricao, p_tipo_evento, p_origem);
+END;
+$proc$;
+
+-- 3 FUNCOES DE TRIGGER e seus 3 TRIGGERS.
+CREATE OR REPLACE FUNCTION public.fn_validar_arquivamento()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $func$
+BEGIN
+  IF NEW.arquivado AND NEW.status <> 'encerrado' THEN
+    RAISE EXCEPTION 'Somente processos encerrados podem ser arquivados';
+  END IF;
+  RETURN NEW;
+END;
+$func$;
+
+CREATE OR REPLACE FUNCTION public.fn_validar_status_prazo()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $func$
+BEGIN
+  IF NEW.status NOT IN ('pendente','concluido','cancelado') THEN
+    RAISE EXCEPTION 'Status de prazo invalido: %', NEW.status;
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status IN ('concluido','cancelado')
+     AND NEW.status IS DISTINCT FROM OLD.status THEN
+    RAISE EXCEPTION 'Prazo finalizado ou cancelado nao pode mudar de status';
+  END IF;
+  RETURN NEW;
+END;
+$func$;
+
+CREATE OR REPLACE FUNCTION public.fn_validar_movimentacao()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $func$
+BEGIN
+  IF NEW.descricao IS NULL OR pg_catalog.btrim(NEW.descricao) = '' THEN
+    RAISE EXCEPTION 'Descricao da movimentacao nao pode ser vazia';
+  END IF;
+  IF NEW.tipo_evento IS NULL OR pg_catalog.btrim(NEW.tipo_evento) = '' THEN
+    RAISE EXCEPTION 'Tipo da movimentacao nao pode ser vazio';
+  END IF;
+  RETURN NEW;
+END;
+$func$;
+
+DROP TRIGGER IF EXISTS tr_validar_arquivamento ON public.processo;
+CREATE TRIGGER tr_validar_arquivamento
+  BEFORE INSERT OR UPDATE OF status, arquivado ON public.processo
+  FOR EACH ROW EXECUTE FUNCTION public.fn_validar_arquivamento();
+
+DROP TRIGGER IF EXISTS tr_validar_status_prazo ON public.prazo;
+CREATE TRIGGER tr_validar_status_prazo
+  BEFORE INSERT OR UPDATE OF status ON public.prazo
+  FOR EACH ROW EXECUTE FUNCTION public.fn_validar_status_prazo();
+
+DROP TRIGGER IF EXISTS tr_validar_movimentacao ON public.linha_tempo;
+CREATE TRIGGER tr_validar_movimentacao
+  BEFORE INSERT OR UPDATE OF descricao, tipo_evento ON public.linha_tempo
+  FOR EACH ROW EXECUTE FUNCTION public.fn_validar_movimentacao();
+
+-- UNIQUE composto para evitar duas permissoes para mesmo usuario/processo.
+-- Se houver duplicatas preexistentes, este indice sinalizara o problema.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sindcomb_permissao_usuario_processo
+  ON public.permissao_processo (id_usuario, id_processo);
+
+COMMIT;
