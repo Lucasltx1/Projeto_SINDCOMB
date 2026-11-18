@@ -17,4 +17,4 @@ Depois reinicie o backend. No início, ele cria as tabelas auxiliares ausentes, 
 
 A aplicação e o backend falam com o PostgreSQL pela rede interna do Compose em `postgres:5432`; a porta não precisa ser publicada no host.
 
-#Todas as consultas foram preenchidas com dados ficticios com o intituito de apenas testar a saude do codigo.
+# Todas as consultas foram preenchidas com dados ficticios com o intituito de apenas testar a saude do codigo.
