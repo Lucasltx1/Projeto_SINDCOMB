@@ -1,3 +1,7 @@
+# Teste das funçoes e dos triggers
+## Estão declarados no schema
+
+
 ```SQL
 -- SINDCOMB / ADP2 | 04 - TESTE DAS 3 FUNCTIONS E 3 PROCEDURES
 -- Todos os INSERT/UPDATE de teste serao revertidos pelo ROLLBACK.
