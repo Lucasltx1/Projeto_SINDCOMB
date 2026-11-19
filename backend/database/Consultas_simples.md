@@ -1,28 +1,38 @@
--- SINDCOMB / ADP1 | 01 - 5 consultas simples, 3 JOINs e 3 subconsultas.
--- Consultas de leitura. Execute no SQL Editor e registre resultados.
-
+SINDCOMB / ADP1 | 01 - 5 consultas simples, 3 JOINs e 3 subconsultas.
+Consultas de leitura. Execute no SQL Editor e registre resultados.
+```SQL
 -- S1 - Usuarios ativos
 SELECT id_usuario, nome, email, primeiro_acesso
 FROM public.usuario WHERE ativo IS TRUE ORDER BY id_usuario LIMIT 40;
+```
 
+```SQL
 -- S2 - Processos nao arquivados
 SELECT id_processo, numero_processo, tipo, status
 FROM public.processo WHERE arquivado IS FALSE ORDER BY numero_processo;
+```
 
+```SQL
 -- S3 - Prazos pendentes com vencimento futuro
 SELECT id_prazo, id_processo, descricao, data_vencimento
 FROM public.prazo WHERE status = 'pendente' AND data_vencimento >= CURRENT_DATE
 ORDER BY data_vencimento;
+```
 
+```SQL
 -- S4 - Documentos maiores ou iguais a 1 KiB
 SELECT id_documento, nome, tipo, tamanho
 FROM public.documento WHERE tamanho >= 1024 ORDER BY tamanho DESC;
+```
 
+```SQL
 -- S5 - Notificacoes nao lidas
 SELECT id_notificacao, titulo, data_criacao, status_leitura
 FROM public.notificacao WHERE status_leitura = 'nao_lida'
 ORDER BY data_criacao DESC;
+```
 
+```SQL
 -- J1 - JOIN + agregacao + agrupamento + filtro: prazos pendentes por processo
 SELECT p.numero_processo, COUNT(pr.id_prazo) AS total_prazos_pendentes
 FROM public.processo AS p
@@ -31,7 +41,9 @@ WHERE pr.status = 'pendente'
 GROUP BY p.id_processo, p.numero_processo
 HAVING COUNT(pr.id_prazo) >= 1
 ORDER BY total_prazos_pendentes DESC, p.numero_processo;
+```
 
+```SQL
 -- J2 - JOIN de tres tabelas: associados vinculados por processo
 SELECT p.numero_processo, COUNT(DISTINCT a.id_associado) AS associados_vinculados
 FROM public.processo AS p
@@ -40,7 +52,9 @@ JOIN public.associado AS a ON a.id_associado = pa.id_associado
 GROUP BY p.id_processo, p.numero_processo
 HAVING COUNT(DISTINCT a.id_associado) > 0
 ORDER BY associados_vinculados DESC, p.numero_processo;
+```
 
+```SQL
 -- J3 - JOIN de duas tabelas: processos com permissao de edicao por usuario
 SELECT u.nome, COUNT(DISTINCT pp.id_processo) AS processos_editaveis
 FROM public.usuario AS u
@@ -49,7 +63,9 @@ WHERE pp.nivel_acesso IN ('edicao','total')
 GROUP BY u.id_usuario, u.nome
 HAVING COUNT(DISTINCT pp.id_processo) >= 1
 ORDER BY processos_editaveis DESC, u.nome;
+```
 
+```SQL
 -- SUB1 - operador IN: processos com prazo pendente
 SELECT p.numero_processo, p.status
 FROM public.processo AS p
@@ -57,7 +73,9 @@ WHERE p.id_processo IN (
     SELECT pr.id_processo FROM public.prazo AS pr WHERE pr.status = 'pendente'
 )
 ORDER BY p.numero_processo;
+```
 
+```SQL
 -- SUB2 - operador EXISTS: processos com movimentacao manual
 SELECT p.numero_processo, p.assunto
 FROM public.processo AS p
@@ -66,7 +84,9 @@ WHERE EXISTS (
     WHERE lt.id_processo = p.id_processo AND lt.origem = 'manual'
 )
 ORDER BY p.numero_processo;
+```
 
+```SQL
 -- SUB3 - operador ALL: prazos posteriores a TODOS os vencimentos do
 -- processo de menor ID. A subconsulta contem pelo menos um prazo na massa.
 SELECT pr.id_prazo, pr.data_vencimento
@@ -77,7 +97,7 @@ WHERE pr.data_vencimento > ALL (
     WHERE base.id_processo = (SELECT MIN(id_processo) FROM public.processo)
 )
 ORDER BY pr.data_vencimento;
-
+```
 
 
 id_prazo | data_vencimento |
