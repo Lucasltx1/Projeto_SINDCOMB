@@ -1,3 +1,4 @@
+```SQL
 -- SINDCOMB / ADP1 | 00 - DIAGNOSTICO PRE-EXECUCAO
 -- Nao modifica dados. Rodar no Supabase SQL Editor com permissao de dono.
 -- Garante que todas as 16 tabelas estejam presentes e tenham >=20 linhas.
@@ -49,7 +50,7 @@ FROM public.permissao_processo
 GROUP BY id_usuario, id_processo HAVING COUNT(*) > 1;
 SELECT id_processo, numero_processo, status, arquivado
 FROM public.processo WHERE arquivado IS TRUE AND status <> 'encerrado';
-
+```
 
 
 
