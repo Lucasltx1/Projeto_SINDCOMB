@@ -1,3 +1,4 @@
+```SQL
 -- SINDCOMB / ADP2 | 04 - TESTE DAS 3 FUNCTIONS E 3 PROCEDURES
 -- Todos os INSERT/UPDATE de teste serao revertidos pelo ROLLBACK.
 -- Executar no SQL Editor como dono APOS 02 e 03 (e massa de teste).
@@ -136,7 +137,7 @@ END;
 $teste$;
 ROLLBACK;
 SELECT 'PASS: 3 FUNCTIONS + 3 PROCEDURES, incluindo casos negativos. Dados preservados com ROLLBACK.' AS resultado;
-
+```
 
 
 | resultado                                                                                    |
@@ -147,7 +148,7 @@ SELECT 'PASS: 3 FUNCTIONS + 3 PROCEDURES, incluindo casos negativos. Dados prese
 
 
 
-
+```SQL
 -- SINDCOMB / ADP2 | 05 - TESTES POSITIVOS E NEGATIVOS DOS 3 TRIGGERS
 -- Executar apos 02_rotinas_triggers_adp2.sql. Nenhuma mudanca persistira.
 BEGIN;
@@ -237,7 +238,7 @@ END;
 $teste$;
 ROLLBACK;
 SELECT 'PASS: 3 TRIGGERS testados nos cenarios validos e invalidos. Dados preservados com ROLLBACK.' AS resultado;
-
+```
 
 | resultado                                                                                   |
 | ------------------------------------------------------------------------------------------- |
@@ -248,7 +249,7 @@ SELECT 'PASS: 3 TRIGGERS testados nos cenarios validos e invalidos. Dados preser
 
 
 
-
+```SQL
 -- SINDCOMB | 08 - EVIDENCIAS DO CATALOGO (ADP1/2/3)
 -- Use para capturas de tela apos instalar os scripts.
 
@@ -294,7 +295,7 @@ SELECT status, COUNT(*) AS quantidade FROM public.processo GROUP BY status ORDER
 SELECT status, COUNT(*) AS quantidade FROM public.prazo GROUP BY status ORDER BY status;
 SELECT nivel_acesso, COUNT(*) AS quantidade FROM public.permissao_processo
 GROUP BY nivel_acesso ORDER BY nivel_acesso;
-
+```
 
 
 | nivel_acesso | quantidade |
